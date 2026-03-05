@@ -52,12 +52,19 @@ def fetch_cloudwatch_logs(
     """
     Fetch recent log events from an AWS CloudWatch Logs log group.
 
+    You MUST choose appropriate values for minutes_back and max_events based on the alert:
+    - If the alarm just fired (< 5 min ago), use minutes_back=10 and max_events=50
+    - If the alarm fired a while ago, increase minutes_back to cover that window (e.g. 60 or 120)
+    - For high-severity alarms or complex issues, increase max_events to 100-200 for more context
+    - For simple threshold alarms, 50 events is usually enough
+    - Use filter_pattern='ERROR' or '{ $.level = "error" }' to focus on errors when investigating error alarms
+
     Args:
-        log_group_name: The name of the CloudWatch log group (e.g. '/copilot/qp-prod-qp-booking-webservice').
-        filter_pattern: Optional CloudWatch filter pattern (e.g. 'ERROR' or '{ $.level = "error" }').
-        minutes_back: How many minutes into the past to search. Default 30.
+        log_group_name: The CloudWatch log group path (e.g. '/copilot/qp-prod-qp-booking-webservice').
+        filter_pattern: CloudWatch filter pattern to narrow results (e.g. 'ERROR', 'Exception', '{ $.level = "error" }').
+        minutes_back: How many minutes into the past to search. Choose based on when the alarm fired.
         region: AWS region. Default 'ap-south-1'.
-        max_events: Maximum number of log events to return. Default 50.
+        max_events: Maximum log events to return. Choose based on severity — more events = more context but slower.
 
     Returns:
         A JSON string with the fetched log events or an error message.

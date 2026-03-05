@@ -9,6 +9,7 @@ import glob
 import json
 import logging
 import os
+import time
 from typing import Optional
 
 from langchain_core.tools import tool
@@ -18,6 +19,7 @@ from langgraph.prebuilt import create_react_agent
 from framework.config import Config
 from framework.memory import Memory
 from framework.events.base import Event
+from framework.conversation_logger import ConversationLogger
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +104,7 @@ class Agent:
         self.memory = memory
         _memory_ref = memory  # expose to the store_correction tool
         self.tools = tools + [store_correction]  # always include correction tool
+        self.conv_logger = ConversationLogger(log_dir="logs")
 
         agent_cfg = config.agent_config
         self.max_iterations = agent_cfg.get("max_iterations", 10)
@@ -163,6 +166,7 @@ class Agent:
         user_message = self._format_event(event)
 
         # Run the agent
+        start_time = time.time()
         try:
             result = self.agent.invoke(
                 {"messages": [("user", user_message)]},
@@ -171,7 +175,19 @@ class Agent:
 
             # Extract the final AI message
             final_message = result["messages"][-1].content
-            logger.info("Agent response: %s", final_message[:200])
+            duration = time.time() - start_time
+            logger.info("Agent response (%.1fs): %s", duration, final_message[:200])
+
+            # Save conversation log
+            log_path = self.conv_logger.save(
+                event_source=event.source,
+                event_type=event.event_type,
+                user_message=user_message,
+                messages=result["messages"],
+                final_response=final_message,
+                duration_seconds=duration,
+            )
+            logger.info("Conversation saved to: %s", log_path)
 
             # Store in memory
             self.memory.add_event(
@@ -180,14 +196,27 @@ class Agent:
                     "event_source": event.source,
                     "event_type": event.event_type,
                     "response_length": len(final_message),
+                    "log_file": log_path,
                 },
             )
 
             return final_message
 
         except Exception as e:
+            duration = time.time() - start_time
             error_msg = f"Agent error: {e}"
             logger.error(error_msg, exc_info=True)
+
+            # Save error log too
+            self.conv_logger.save(
+                event_source=event.source,
+                event_type=event.event_type,
+                user_message=user_message,
+                messages=[],
+                final_response=f"**ERROR**: {error_msg}",
+                duration_seconds=duration,
+            )
+
             self.memory.add_event(
                 summary=f"Error processing {event.source}/{event.event_type}: {e}",
             )

@@ -22,7 +22,7 @@ from framework.events.base import Event
 from framework.tools.email_parser import parse_aws_alert_email
 from framework.tools.cloudwatch_fetcher import fetch_cloudwatch_logs
 from framework.tools.service_registry import fetch_service_info
-from framework.tools.teams_notifier import notify_teams
+# from framework.tools.teams_notifier import notify_teams  # TODO: Enable when Teams webhook is configured
 
 # ── Logging ────────────────────────────────────────────────────────────
 
@@ -39,7 +39,7 @@ ALL_TOOLS = [
     parse_aws_alert_email,
     fetch_cloudwatch_logs,
     fetch_service_info,
-    notify_teams,
+    # notify_teams,  # TODO: Enable when Teams webhook is configured
 ]
 
 

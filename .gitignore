@@ -13,6 +13,7 @@ env/
 # Project specifics
 memory.json
 config.yaml
+logs/
 
 # IDEs and Editors
 .vscode/
