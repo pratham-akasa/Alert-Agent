@@ -21,7 +21,8 @@ from framework.agent import Agent
 from framework.events.base import Event
 from framework.tools.email_parser import parse_aws_alert_email
 from framework.tools.cloudwatch_fetcher import fetch_cloudwatch_logs
-from framework.tools.service_registry import fetch_service_info
+# from framework.tools.service_registry import fetch_service_info  # TODO: Enable when services.yaml is needed
+from framework.tools.log_group_discovery import search_log_groups
 # from framework.tools.teams_notifier import notify_teams  # TODO: Enable when Teams webhook is configured
 
 # ── Logging ────────────────────────────────────────────────────────────
@@ -38,7 +39,8 @@ logger = logging.getLogger("main")
 ALL_TOOLS = [
     parse_aws_alert_email,
     fetch_cloudwatch_logs,
-    fetch_service_info,
+    search_log_groups,
+    # fetch_service_info,  # TODO: Enable when services.yaml is needed
     # notify_teams,  # TODO: Enable when Teams webhook is configured
 ]
 

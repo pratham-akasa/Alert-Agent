@@ -60,7 +60,7 @@ def fetch_cloudwatch_logs(
     - Use filter_pattern='ERROR' or '{ $.level = "error" }' to focus on errors when investigating error alarms
 
     Args:
-        log_group_name: The CloudWatch log group path (e.g. '/copilot/qp-prod-qp-booking-webservice').
+        log_group_name: The CloudWatch log group path .
         filter_pattern: CloudWatch filter pattern to narrow results (e.g. 'ERROR', 'Exception', '{ $.level = "error" }').
         minutes_back: How many minutes into the past to search. Choose based on when the alarm fired.
         region: AWS region. Default 'ap-south-1'.
@@ -75,6 +75,9 @@ def fetch_cloudwatch_logs(
         end_time = datetime.now(timezone.utc)
         start_time = end_time - timedelta(minutes=minutes_back)
 
+        # Sanitize filter_pattern: remove invalid wildcard characters
+        sanitized_pattern = filter_pattern.replace('*', '').replace('?', '').strip() if filter_pattern else ''
+
         kwargs = {
             "logGroupName": log_group_name,
             "startTime": int(start_time.timestamp() * 1000),
@@ -82,12 +85,12 @@ def fetch_cloudwatch_logs(
             "limit": max_events,
             "interleaved": True,
         }
-        if filter_pattern:
-            kwargs["filterPattern"] = filter_pattern
+        if sanitized_pattern:
+            kwargs["filterPattern"] = sanitized_pattern
 
         logger.info(
             "Fetching CloudWatch logs: group=%s pattern='%s' minutes_back=%d",
-            log_group_name, filter_pattern, minutes_back,
+            log_group_name, sanitized_pattern, minutes_back,
         )
 
         response = client.filter_log_events(**kwargs)
@@ -104,8 +107,8 @@ def fetch_cloudwatch_logs(
 
         result = {
             "log_group": log_group_name,
-            "filter_pattern": filter_pattern,
-            "time_range": f"{start_time.isoformat()} → {end_time.isoformat()}",
+            "filter_pattern": sanitized_pattern,
+            "time_range": f"{start_time.isoformat()}  {end_time.isoformat()}",
             "event_count": len(events),
             "events": events,
         }

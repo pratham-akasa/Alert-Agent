@@ -1,39 +1,47 @@
-# ──────────────────────────────────────────────────────────────────────
-# Service Registry — maps alarms → log groups → owners → dependencies
-#
-# The agent uses this to look up context when investigating alerts.
-# Add your services below following the template.
-# ──────────────────────────────────────────────────────────────────────
+# # ──────────────────────────────────────────────────────────────────────
+# # Service Registry — maps alarms → log groups → owners → dependencies
+# #
+# # The agent uses this to look up context when investigating alerts.
+# # Add your services below following the template.
+# # ──────────────────────────────────────────────────────────────────────
 
-services:
+# # # ──────────────────────────────────────────────────────────────────────
+# # # Service Registry — maps alarms → log groups → owners → dependencies
+# # #
+# # # The agent uses this to look up context when investigating alerts.
+# # # Add your services below following the template.
+# # # ──────────────────────────────────────────────────────────────────────
 
-  qp-booking-service:
-    description: "Handles flight booking, seat selection, and reservation management"
-    log_groups:
-      - "/copilot/qp-prod-qp-booking-webservice"
-    alarms:
-      - "qp-booking-service-common-error"
-      - "qp-booking-service-5xx-error"
-    owner_team: "booking-platform"
-    teams_channel: "AWS Alerts"
-    depends_on:
-      - "qp-payment-service"
-      - "qp-inventory-service"
-    runbook: ""
-    notes: "Common error alarm can fire during batch jobs around 4 AM UTC"
 
-  # ── Template: Copy this block to add a new service ──────────────────
-  #
-  # service-name:
-  #   description: "What this service does"
-  #   log_groups:
-  #     - "/copilot/qp-prod-service-name"
-  #   alarms:
-  #     - "alarm-name-1"
-  #     - "alarm-name-2"
-  #   owner_team: "team-name"
-  #   teams_channel: "AWS Alerts"
-  #   depends_on:
-  #     - "other-service"
-  #   runbook: "https://docs.internal/runbooks/service-name"
-  #   notes: "Any operational notes"
+# services:
+
+#   qp-booking-service:
+#     description: "Handles flight booking, seat selection, and reservation management"
+#     log_groups:
+#       - "/copilot/qp-prod-qp-booking-webservice"
+#     alarms:
+#       - "qp-booking-service-common-error"
+#       - "qp-booking-service-5xx-error"
+#     owner_team: "booking-platform"
+#     teams_channel: "AWS Alerts"
+#     depends_on:
+#       - "qp-payment-service"
+#       - "qp-inventory-service"
+#     runbook: ""
+#     notes: "Common error alarm can fire during batch jobs around 4 AM UTC"
+
+#   # ── Template: Copy this block to add a new service ──────────────────
+#   #
+#   # service-name:
+#   #   description: "What this service does"
+#   #   log_groups:
+#   #     - "/copilot/qp-prod-service-name"
+#   #   alarms:
+#   #     - "alarm-name-1"
+#   #     - "alarm-name-2"
+#   #   owner_team: "team-name"
+#   #   teams_channel: "AWS Alerts"
+#   #   depends_on:
+#   #     - "other-service"
+#   #   runbook: "https://docs.internal/runbooks/service-name"
+#   #   notes: "Any operational notes"
