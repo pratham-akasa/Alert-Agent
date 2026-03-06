@@ -1,26 +1,27 @@
 # Skill: Log Group Discovery
 
 ## When to Use
-- Call this tool **BEFORE** `fetch_cloudwatch_logs` when you don't already know the exact log group name.
-- Use the alarm name or service name from the parsed alert to search for relevant log groups.
+- Call **`discover_log_group(alarm_name)`** BEFORE `fetch_cloudwatch_logs` when investigating an alarm.
+- This is the **primary tool** to find the right log group. It automatically extracts keywords from the alarm name, tries multiple prioritized queries, and returns the best matching `/copilot/` log group (preferring production environments).
 - You do NOT need this tool if the service registry already gave you a log group name.
 
-## How to Use
-1. Extract the **service name** from the alarm (e.g. `qp-booking-service-common-error` → search for `booking`)
-2. Call `search_log_groups(query="booking")`
-3. Review the results and pick the most relevant log group (usually the production one)
-4. Then call `fetch_cloudwatch_logs(log_group_name=<chosen_group>)`
+## Primary Workflow
+1. Parse the alert to get the `alarm_name` (e.g., `qp-booking-service-common-error`)
+2. Call `discover_log_group(alarm_name="qp-booking-service-common-error")`
+3. If it returns a log group (e.g., `/copilot/qp-prod-qp-booking-webservice`), call `fetch_cloudwatch_logs` with it.
+4. If it fails to find anything, see "Fallback Workflow" below.
 
-## Query Tips
-- Use **short, specific keywords**: `booking`, `payment`, `notification`
-- Don't use the full alarm name — extract the service part
-- If too many results, add the environment: `booking prod`
-- If no results, try broader terms: `qp` instead of `qp-booking-service`
+## Fallback Workflow (`search_log_groups`)
+If `discover_log_group` returns `not_found`, or if you need to manually explore log groups:
+- Use the `search_log_groups(query)` tool.
+- Provide a custom, broad query (e.g. `query="booking"` instead of the full service name).
+- Review the results and manually select the best one.
 
 ## Example Flow
 ```
 1. parse_aws_alert_email → alarm_name: "qp-booking-service-common-error"
-2. search_log_groups(query="booking") → finds ["/copilot/qp-prod-qp-booking-webservice", ...]
-3. Agent picks "/copilot/qp-prod-qp-booking-webservice" (production log group)
-4. fetch_cloudwatch_logs(log_group_name="/copilot/qp-prod-qp-booking-webservice")
+2. discover_log_group(alarm_name="qp-booking-service-common-error") 
+   → Automatically tries "booking-service", "booking", etc.
+   → Returns "/copilot/qp-prod-qp-booking-webservice"
+3. fetch_cloudwatch_logs(log_group_name="/copilot/qp-prod-qp-booking-webservice")
 ```
