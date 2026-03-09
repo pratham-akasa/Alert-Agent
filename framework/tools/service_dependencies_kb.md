@@ -4,7 +4,7 @@ This file documents the dependencies for services in this project.
 
 ## qp-booking-webservice
 
-- NavOds-Webservice
+- Nav-ods-Webservice
 - data-transfer-service   
 
 ---

@@ -25,31 +25,69 @@ logger = logging.getLogger(__name__)
 
 # ── System prompt ──────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are an autonomous AWS alert handling agent.
+SYSTEM_PROMPT = """You are an AWS alert handler. You MUST respond ONLY in English language.
 
-Your job:
-1. Analyze incoming events (email alerts, manual inputs).
-2. Use the available tools to parse, investigate, and gather context.
-3. Provide a clear, actionable summary of what happened and what should be done.
-4. If a user corrects your analysis, store the correction for future reference.
+CRITICAL LANGUAGE RULE: 
+- Write ALL responses in English
+- Do NOT use Chinese, Japanese, Korean, or any other language
+- If you start writing in another language, STOP and rewrite in English
 
-Your workflow for alerts (follow ALL steps in sequence):
-1. Parse the alert email using parse_aws_alert_email to extract alarm name, state, region, etc.
-2. Discover the relevant log group for the primary service using discover_log_group(alarm_name=<alarm_name>). This automatically tries multiple search queries in priority order and returns the best matching /copilot/ log group.
-3. Immediately fetch CloudWatch logs using fetch_cloudwatch_logs with the log group you chose. Choose minutes_back and max_events based on the alarm timing and severity.
-4. Check if there are any dependencies of the affected service by using the check_service_dependencies tool which reads the service_dependencies_kb.md file.
-5. If dependencies are found, for EACH dependency: discover its log group using discover_log_group(alarm_name=<dependency_name>), and fetch its logs using fetch_cloudwatch_logs to see if the root cause originated there.
-6. After going through all the logs of the primary service and its dependencies, analyze all fetched logs and errors. Produce a clear, actionable summary including: why it happened, where it happened, and suggest a solution.
+Execute ALL steps automatically without asking for permission.
 
-Guidelines:
-- Always use discover_log_group first to find logs. Only fall back to search_log_groups if discover_log_group returns "not_found".
-- Check the corrections below — if a user has previously corrected your analysis for this alarm, apply that correction.
-- If a user tells you something was wrong, use the store_correction tool to remember it for next time.
+WORKFLOW (execute in order):
+1. parse_aws_alert_email → Extract alarm_name from email
+2. discover_log_group(alarm_name=<alarm_name>) → Get best_log_group
+3. fetch_cloudwatch_logs(log_group_name=<best_log_group>, filter_pattern="ERROR", minutes_back=10)
+   ⚠️ CRITICAL: Use the EXACT log_group_name from step 2's "best_log_group" field
+   ⚠️ Parameter name is "log_group_name" NOT "log_group"
+4. check_service_dependencies(alarm_name=<alarm_name>) - MANDATORY, automatically checks ALL dependencies
+   ⚠️ CRITICAL: Use the EXACT alarm_name from step 1, do NOT modify it
+5. Analyze all logs (primary + dependencies) and provide summary IN ENGLISH ONLY
+
+RULES:
+- Execute all steps automatically - do NOT ask for permission
+- Do NOT stop after discovering log groups - immediately fetch logs
+- ALWAYS use the "best_log_group" value from discover_log_group output in step 3
+- ALWAYS use the correct parameter name "log_group_name" for fetch_cloudwatch_logs
+- ALWAYS use the exact alarm_name from the email - do NOT change it
+- ALWAYS call check_service_dependencies in step 4 - it automatically handles all dependencies
+- The dependency checker is fully automated - it discovers log groups and fetches logs for ALL dependencies
+- Only provide final summary after completing ALL steps
+- WRITE YOUR ENTIRE RESPONSE IN ENGLISH - NO EXCEPTIONS
+
+## FINAL SUMMARY FORMAT (MANDATORY)
+
+After completing all tool calls, you MUST provide a structured analysis with these sections:
+
+### 1. WHERE IT HAPPENED
+- Identify the specific service(s) and log group(s) where errors occurred
+- Include both primary service and any affected dependencies
+- Example: "Errors occurred in data-transfer-service (/copilot/qp-prod-data-transfer-service)"
+
+### 2. WHAT HAPPENED
+- Describe the specific error from the log messages
+- Extract the actual error type and message from the logs
+- Example: "UnrecognizedPropertyException: Field 'DelayReasonCode.Custom' not recognized in DelayDetail class"
+
+### 3. WHY IT HAPPENED (Root Cause)
+- Analyze the error to determine the root cause
+- Consider: data format issues, API changes, configuration problems, dependency failures
+- Example: "The incoming data contains a field 'DelayReasonCode.Custom' that doesn't match the expected schema"
+
+### 4. POSSIBLE SOLUTIONS
+- Provide 2-3 actionable solutions
+- Be specific and technical
+- Example:
+  * Update the DelayDetail DTO to include the 'DelayReasonCode.Custom' field
+  * Add @JsonIgnoreProperties(ignoreUnknown = true) to handle unexpected fields
+  * Validate the data source to ensure it matches the expected schema
+
+DO NOT provide generic summaries. ALWAYS analyze the actual error messages from the logs.
 
 ## Available Skills
 {skills_context}
 
-## Agent Memory
+## Memory
 {memory_context}
 
 ## Corrections
@@ -175,8 +213,42 @@ class Agent:
                 config={"recursion_limit": self.max_iterations},
             )
 
+            # Check if agent completed all required steps
+            messages = result["messages"]
+            tool_calls = [msg for msg in messages if hasattr(msg, 'tool_calls') and msg.tool_calls]
+            tools_used = set()
+            for msg in tool_calls:
+                for tc in msg.tool_calls:
+                    tools_used.add(tc.get('name', ''))
+            
+            # Required tools for alarm investigation
+            required_tools = {'parse_aws_alert_email', 'discover_log_group', 'fetch_cloudwatch_logs', 'check_service_dependencies'}
+            missing_tools = required_tools - tools_used
+            
+            if missing_tools and event.source == "email":
+                logger.warning("Agent did not use required tools: %s", missing_tools)
+                # Add a follow-up message to force continuation
+                follow_up = f"You have not completed the investigation. You MUST call these tools: {', '.join(missing_tools)}. Continue now."
+                result = self.agent.invoke(
+                    {"messages": messages + [("user", follow_up)]},
+                    config={"recursion_limit": self.max_iterations},
+                )
+
             # Extract the final AI message
             final_message = result["messages"][-1].content
+            
+            # Apply response formatting for AWS alarm events
+            if event.source == "email" and event.event_type == "aws_alarm":
+                from framework.response_formatter import ResponseFormatter
+                formatter = ResponseFormatter()
+                formatted_response = formatter.format_response(result["messages"])
+                
+                if formatted_response:
+                    logger.info("Applied structured formatting to response")
+                    final_message = formatted_response
+                else:
+                    logger.warning("Could not apply formatting, using original response")
+            
             duration = time.time() - start_time
             logger.info("Agent response (%.1fs): %s", duration, final_message[:200])
 
@@ -248,8 +320,10 @@ class Agent:
 
         if event.source == "email":
             parts.append(
-                "\nPlease parse this alert email and investigate the alarm. "
-                "If you can determine the relevant log group, fetch recent CloudWatch logs."
+                "\n=== INSTRUCTIONS ===\n"
+                "Execute the full investigation workflow: parse → discover → fetch logs → check dependencies → analyze.\n"
+                "CRITICAL: Write your ENTIRE response in ENGLISH language. Do NOT use Chinese or any other language.\n"
+                "===================\n"
             )
         return "\n".join(parts)
 
