@@ -35,29 +35,71 @@ CRITICAL LANGUAGE RULE:
 Execute ALL steps automatically without asking for permission.
 
 WORKFLOW (execute in order):
-1. parse_aws_alert_email → Extract alarm_name from email
+1. parse_aws_alert_email → Extract alarm_name and timestamp from email
 2. discover_log_group(alarm_name=<alarm_name>) → Get best_log_group
-3. fetch_cloudwatch_logs(log_group_name=<best_log_group>, filter_pattern="ERROR", minutes_back=10)
-   ⚠️ CRITICAL: Use the EXACT log_group_name from step 2's "best_log_group" field
-   ⚠️ Parameter name is "log_group_name" NOT "log_group"
-4. check_service_dependencies(alarm_name=<alarm_name>) - MANDATORY, automatically checks ALL dependencies
-   ⚠️ CRITICAL: Use the EXACT alarm_name from step 1, do NOT modify it
-5. Analyze all logs (primary + dependencies) and provide summary IN ENGLISH ONLY
+3. fetch_cloudwatch_logs(log_group_name=<best_log_group>, filter_pattern="ERROR", minutes_back=10, alarm_timestamp=<timestamp>)
+    CRITICAL: Use the EXACT log_group_name from step 2's "best_log_group" field
+    CRITICAL: Use the timestamp from step 1's parse output as alarm_timestamp parameter
+4. check_service_dependencies(alarm_name=<alarm_name>, alarm_timestamp=<timestamp>) - MANDATORY, automatically checks ALL dependencies
+5. validate_investigation_logs(primary_logs_response=<step3_output>, dependency_logs_response=<step4_output>, alarm_timestamp=<timestamp>) - MANDATORY validation of ALL services
+6. Analyze all logs (primary + dependencies) and provide summary IN ENGLISH ONLY
 
 RULES:
 - Execute all steps automatically - do NOT ask for permission
 - Do NOT stop after discovering log groups - immediately fetch logs
 - ALWAYS use the "best_log_group" value from discover_log_group output in step 3
 - ALWAYS use the correct parameter name "log_group_name" for fetch_cloudwatch_logs
+- ALWAYS pass the "timestamp" from parse_aws_alert_email as "alarm_timestamp" to fetch_cloudwatch_logs
 - ALWAYS use the exact alarm_name from the email - do NOT change it
-- ALWAYS call check_service_dependencies in step 4 - it automatically handles all dependencies
+- ALWAYS call check_service_dependencies in step 4 with the alarm_timestamp - it automatically handles all dependencies
+- ALWAYS call validate_investigation_logs in step 5 to validate ALL services (primary + dependencies)
 - The dependency checker is fully automated - it discovers log groups and fetches logs for ALL dependencies
-- Only provide final summary after completing ALL steps
+- The validation step is MANDATORY - it ensures all logs were fetched from correct time windows
+- Only provide final summary after completing ALL steps including validation
 - WRITE YOUR ENTIRE RESPONSE IN ENGLISH - NO EXCEPTIONS
 
 ## FINAL SUMMARY FORMAT (MANDATORY)
 
-After completing all tool calls, you MUST provide a structured analysis with these sections:
+After completing all tool calls, you MUST provide a structured analysis following this EXACT format:
+
+---
+## 🔍 INVESTIGATION SUMMARY
+
+### 1. WHERE IT HAPPENED
+[List the specific services and log groups where errors occurred]
+- Primary Service: [service name]
+- Primary Log Group: [log group path]
+- Affected Dependencies: [list any dependencies with errors]
+
+### 2. WHAT HAPPENED
+[Describe the specific error from the actual log messages]
+- Error Type: [exact error type from logs]
+- Error Message: [actual error message from logs]
+- Error Count: [number of occurrences]
+- Sample Error: [paste a sample error message]
+
+### 3. WHY IT HAPPENED (Root Cause)
+[Analyze the error to determine the root cause based on the actual error messages]
+- Root Cause: [specific technical reason]
+- Contributing Factors: [any additional factors]
+
+### 4. POSSIBLE SOLUTIONS
+[Provide 2-3 specific, actionable solutions]
+1. [First solution with technical details]
+2. [Second solution with technical details]
+3. [Third solution with technical details]
+---
+
+CRITICAL RULES FOR SUMMARY:
+- You MUST use the EXACT format above with the emoji and section headers
+- You MUST extract actual error messages from the tool outputs
+- You MUST NOT provide generic descriptions - use specific details from the logs
+- You MUST analyze the actual error type (e.g., UnrecognizedPropertyException, TimeoutException, etc.)
+- You MUST provide technical, actionable solutions based on the specific error
+
+EXAMPLE OF GOOD SUMMARY:
+---
+## 🔍 INVESTIGATION SUMMARY
 
 ### 1. WHERE IT HAPPENED
 - Identify the specific service(s) and log group(s) where errors occurred
@@ -77,10 +119,6 @@ After completing all tool calls, you MUST provide a structured analysis with the
 ### 4. POSSIBLE SOLUTIONS
 - Provide 2-3 actionable solutions
 - Be specific and technical
-- Example:
-  * Update the DelayDetail DTO to include the 'DelayReasonCode.Custom' field
-  * Add @JsonIgnoreProperties(ignoreUnknown = true) to handle unexpected fields
-  * Validate the data source to ensure it matches the expected schema
 
 DO NOT provide generic summaries. ALWAYS analyze the actual error messages from the logs.
 
@@ -145,6 +183,10 @@ class Agent:
         _memory_ref = memory  # expose to the store_correction tool
         self.tools = tools + [store_correction]  # always include correction tool
         self.conv_logger = ConversationLogger(log_dir="logs")
+        
+        # Initialize context manager to prevent value drift
+        from framework.context_manager import ContextManager
+        self.context_manager = ContextManager()
 
         agent_cfg = config.agent_config
         self.max_iterations = agent_cfg.get("max_iterations", 10)
@@ -201,6 +243,9 @@ class Agent:
         Returns the agent's final text response.
         """
         logger.info("Processing event: %s", event.summary)
+        
+        # Clear context for new event
+        self.context_manager.clear()
 
         # Build the user message from the event
         user_message = self._format_event(event)
@@ -212,6 +257,9 @@ class Agent:
                 {"messages": [("user", user_message)]},
                 config={"recursion_limit": self.max_iterations},
             )
+            
+            # Update context from tool outputs
+            self._update_context_from_messages(result["messages"])
 
             # Check if agent completed all required steps
             messages = result["messages"]
@@ -222,32 +270,27 @@ class Agent:
                     tools_used.add(tc.get('name', ''))
             
             # Required tools for alarm investigation
-            required_tools = {'parse_aws_alert_email', 'discover_log_group', 'fetch_cloudwatch_logs', 'check_service_dependencies'}
+            required_tools = {'parse_aws_alert_email', 'discover_log_group', 'fetch_cloudwatch_logs', 'check_service_dependencies', 'validate_investigation_logs'}
             missing_tools = required_tools - tools_used
             
             if missing_tools and event.source == "email":
                 logger.warning("Agent did not use required tools: %s", missing_tools)
-                # Add a follow-up message to force continuation
-                follow_up = f"You have not completed the investigation. You MUST call these tools: {', '.join(missing_tools)}. Continue now."
+                # Add context summary to help agent
+                context_summary = self.context_manager.get_summary()
+                follow_up = (
+                    f"You have not completed the investigation. You MUST call these tools: {', '.join(missing_tools)}.\n"
+                    f"{context_summary}\n"
+                    f"Use the EXACT values from the context above. Continue now."
+                )
                 result = self.agent.invoke(
                     {"messages": messages + [("user", follow_up)]},
                     config={"recursion_limit": self.max_iterations},
                 )
+                # Update context again
+                self._update_context_from_messages(result["messages"])
 
             # Extract the final AI message
             final_message = result["messages"][-1].content
-            
-            # Apply response formatting for AWS alarm events
-            if event.source == "email" and event.event_type == "aws_alarm":
-                from framework.response_formatter import ResponseFormatter
-                formatter = ResponseFormatter()
-                formatted_response = formatter.format_response(result["messages"])
-                
-                if formatted_response:
-                    logger.info("Applied structured formatting to response")
-                    final_message = formatted_response
-                else:
-                    logger.warning("Could not apply formatting, using original response")
             
             duration = time.time() - start_time
             logger.info("Agent response (%.1fs): %s", duration, final_message[:200])
@@ -295,6 +338,15 @@ class Agent:
                 summary=f"Error processing {event.source}/{event.event_type}: {e}",
             )
             return error_msg
+    
+    def _update_context_from_messages(self, messages: list) -> None:
+        """Update context manager from tool outputs in messages."""
+        for msg in messages:
+            if hasattr(msg, 'type') and msg.type == 'tool':
+                tool_name = getattr(msg, 'name', '')
+                content = getattr(msg, 'content', '')
+                if tool_name:
+                    self.context_manager.update_from_tool_output(tool_name, content)
 
     def process_text(self, text: str) -> str:
         """

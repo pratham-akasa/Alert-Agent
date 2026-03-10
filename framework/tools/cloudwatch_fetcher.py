@@ -48,9 +48,13 @@ def fetch_cloudwatch_logs(
     minutes_back: int = 30,
     region: str = "ap-south-1",
     max_events: int = 50,
+    alarm_timestamp: str = None,
 ) -> str:
     """
     Fetch recent log events from an AWS CloudWatch Logs log group.
+
+    IMPORTANT: If you have the alarm timestamp from parse_aws_alert_email, you MUST pass it as alarm_timestamp parameter.
+    This ensures logs are fetched from the correct time window when the alarm actually fired.
 
     You MUST choose appropriate values for minutes_back and max_events based on the alert:
     - If the alarm just fired (< 5 min ago), use minutes_back=10 and max_events=50
@@ -60,11 +64,12 @@ def fetch_cloudwatch_logs(
     - Use filter_pattern='ERROR' or '{ $.level = "error" }' to focus on errors when investigating error alarms
 
     Args:
-        log_group_name: The CloudWatch log group path .
+        log_group_name: The CloudWatch log group path.
         filter_pattern: CloudWatch filter pattern to narrow results (e.g. 'ERROR', 'Exception', '{ $.level = "error" }').
-        minutes_back: How many minutes into the past to search. Choose based on when the alarm fired.
+        minutes_back: How many minutes into the past to search from the alarm timestamp. Choose based on when the alarm fired.
         region: AWS region. Default 'ap-south-1'.
         max_events: Maximum log events to return. Choose based on severity — more events = more context but slower.
+        alarm_timestamp: The timestamp from the alarm email (from parse_aws_alert_email output). If provided, logs will be fetched around this time instead of current time.
 
     Returns:
         A JSON string with the fetched log events or an error message.
@@ -72,7 +77,33 @@ def fetch_cloudwatch_logs(
     try:
         client = _get_cloudwatch_client(region=region)
 
-        end_time = datetime.now(timezone.utc)
+        # Use alarm timestamp if provided, otherwise use current time
+        if alarm_timestamp:
+            try:
+                # Try parsing various timestamp formats
+                for fmt in [
+                    "%A %d %B, %Y %H:%M:%S %Z",  # "Wednesday 04 March, 2026 04:08:18 UTC"
+                    "%Y-%m-%dT%H:%M:%S%z",        # ISO format with timezone
+                    "%Y-%m-%d %H:%M:%S",          # Simple format
+                ]:
+                    try:
+                        end_time = datetime.strptime(alarm_timestamp, fmt)
+                        if end_time.tzinfo is None:
+                            end_time = end_time.replace(tzinfo=timezone.utc)
+                        logger.info("Using alarm timestamp: %s", alarm_timestamp)
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    # If all formats fail, use current time
+                    logger.warning("Could not parse alarm_timestamp '%s', using current time", alarm_timestamp)
+                    end_time = datetime.now(timezone.utc)
+            except Exception as e:
+                logger.warning("Error parsing alarm_timestamp: %s, using current time", e)
+                end_time = datetime.now(timezone.utc)
+        else:
+            end_time = datetime.now(timezone.utc)
+
         start_time = end_time - timedelta(minutes=minutes_back)
 
         # Sanitize filter_pattern: remove invalid wildcard characters
@@ -89,8 +120,8 @@ def fetch_cloudwatch_logs(
             kwargs["filterPattern"] = sanitized_pattern
 
         logger.info(
-            "Fetching CloudWatch logs: group=%s pattern='%s' minutes_back=%d",
-            log_group_name, sanitized_pattern, minutes_back,
+            "Fetching CloudWatch logs: group=%s pattern='%s' time_window=%s to %s",
+            log_group_name, sanitized_pattern, start_time.isoformat(), end_time.isoformat(),
         )
 
         response = client.filter_log_events(**kwargs)
@@ -108,9 +139,17 @@ def fetch_cloudwatch_logs(
         result = {
             "log_group": log_group_name,
             "filter_pattern": sanitized_pattern,
-            "time_range": f"{start_time.isoformat()}  {end_time.isoformat()}",
+            "time_range": f"{start_time.isoformat()} → {end_time.isoformat()}",
+            "alarm_timestamp_used": alarm_timestamp if alarm_timestamp else "current time",
             "event_count": len(events),
             "events": events,
+            "validation": {
+                "timestamp_source": "alarm" if alarm_timestamp else "current",
+                "window_minutes": minutes_back,
+                "aws_console_url": f"https://console.aws.amazon.com/cloudwatch/home?region={region}#logsV2:log-groups/log-group/{log_group_name.replace('/', '$252F')}/log-events$3FfilterPattern$3D{sanitized_pattern}$26start$3D{int(start_time.timestamp() * 1000)}$26end$3D{int(end_time.timestamp() * 1000)}",
+                "expected_end_time": end_time.isoformat(),
+                "expected_start_time": start_time.isoformat()
+            }
         }
 
         logger.info("Fetched %d log events from %s", len(events), log_group_name)
@@ -124,3 +163,4 @@ def fetch_cloudwatch_logs(
         }
         logger.error("CloudWatch fetch failed: %s", e)
         return json.dumps(error_msg, indent=2)
+

@@ -164,38 +164,40 @@ def _extract_service_name_from_alarm(alarm_name: str) -> str:
 
 
 @tool
-def check_service_dependencies(alarm_name: str, region: str = "ap-south-1") -> str:
+def check_service_dependencies(alarm_name: str, region: str = "ap-south-1", alarm_timestamp: str = None) -> str:
     """
     Automatically check service dependencies and fetch their CloudWatch logs.
-    
+
     This tool:
     1. Extracts the service name from the alarm
     2. Looks up dependencies in the knowledge base
     3. For each dependency: discovers log group and fetches recent ERROR logs
     4. Returns a comprehensive report of all dependency logs
-    
+
     Use this tool AFTER fetching logs from the primary service to check if
     dependencies are the root cause of the alarm.
-    
+
     Args:
         alarm_name: The alarm name (e.g., 'qp-booking-service-common-error')
         region: AWS region. Default 'ap-south-1'
-    
+        alarm_timestamp: The timestamp from the alarm email (from parse_aws_alert_email output).
+                        If provided, logs will be fetched around this time instead of current time.
+
     Returns:
         JSON string with dependency analysis and all fetched logs
     """
     from framework.tools.log_group_discovery import _get_resource_explorer_client, _search_resource_explorer, _rank_log_groups
     from framework.tools.cloudwatch_fetcher import _get_cloudwatch_client
     from datetime import datetime, timedelta, timezone
-    
-    logger.info("check_service_dependencies: alarm='%s'", alarm_name)
-    
+
+    logger.info("check_service_dependencies: alarm='%s', timestamp='%s'", alarm_name, alarm_timestamp)
+
     # Extract service name
     service_name = _extract_service_name_from_alarm(alarm_name)
-    
+
     # Get dependencies from KB
     dependencies = _parse_dependencies_from_kb(service_name)
-    
+
     if not dependencies:
         return json.dumps({
             "status": "no_dependencies",
@@ -204,7 +206,7 @@ def check_service_dependencies(alarm_name: str, region: str = "ap-south-1") -> s
             "message": f"No dependencies found for service '{service_name}' in the knowledge base.",
             "hint": "The primary service may be the root cause, or dependencies are not documented yet."
         }, indent=2)
-    
+
     # Process each dependency
     results = {
         "status": "completed",
@@ -213,11 +215,40 @@ def check_service_dependencies(alarm_name: str, region: str = "ap-south-1") -> s
         "dependencies_checked": len(dependencies),
         "dependency_results": []
     }
-    
+
     try:
         re_client = _get_resource_explorer_client(region=region)
         cw_client = _get_cloudwatch_client(region=region)
-        
+
+        # Calculate time window based on alarm timestamp or current time
+        if alarm_timestamp:
+            try:
+                # Try parsing various timestamp formats
+                for fmt in [
+                    "%A %d %B, %Y %H:%M:%S %Z",  # "Wednesday 04 March, 2026 04:08:18 UTC"
+                    "%Y-%m-%dT%H:%M:%S%z",        # ISO format with timezone
+                    "%Y-%m-%d %H:%M:%S",          # Simple format
+                ]:
+                    try:
+                        end_time = datetime.strptime(alarm_timestamp, fmt)
+                        if end_time.tzinfo is None:
+                            end_time = end_time.replace(tzinfo=timezone.utc)
+                        logger.info("Using alarm timestamp for dependencies: %s", alarm_timestamp)
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    # If all formats fail, use current time
+                    logger.warning("Could not parse alarm_timestamp '%s', using current time", alarm_timestamp)
+                    end_time = datetime.now(timezone.utc)
+            except Exception as e:
+                logger.warning("Error parsing alarm_timestamp: %s, using current time", e)
+                end_time = datetime.now(timezone.utc)
+        else:
+            end_time = datetime.now(timezone.utc)
+
+        start_time = end_time - timedelta(minutes=10)
+
         for dep in dependencies:
             dep_result = {
                 "dependency_name": dep,
@@ -226,21 +257,19 @@ def check_service_dependencies(alarm_name: str, region: str = "ap-south-1") -> s
                 "error_count": 0,
                 "errors": []
             }
-            
+
             try:
                 # Discover log group for dependency using smart search
                 logger.info("Discovering log group for dependency: %s", dep)
                 best_match = _search_for_dependency_log_group(re_client, dep, region, max_results=20)
-                
+
                 if best_match:
                     log_group = best_match["log_group_name"]
                     dep_result["log_group"] = log_group
-                    
-                    # Fetch logs
+
+                    # Fetch logs using the same timestamp as the alarm
                     logger.info("Fetching logs from dependency log group: %s", log_group)
-                    end_time = datetime.now(timezone.utc)
-                    start_time = end_time - timedelta(minutes=10)
-                    
+
                     response = cw_client.filter_log_events(
                         logGroupName=log_group,
                         startTime=int(start_time.timestamp() * 1000),
@@ -249,7 +278,7 @@ def check_service_dependencies(alarm_name: str, region: str = "ap-south-1") -> s
                         limit=50,
                         interleaved=True,
                     )
-                    
+
                     events = []
                     for evt in response.get("events", []):
                         events.append({
@@ -258,22 +287,24 @@ def check_service_dependencies(alarm_name: str, region: str = "ap-south-1") -> s
                             ).isoformat(),
                             "message": evt.get("message", "").strip()[:500]  # Truncate long messages
                         })
-                    
+
                     dep_result["logs_fetched"] = True
                     dep_result["error_count"] = len(events)
                     dep_result["errors"] = events
-                    
+                    dep_result["time_range"] = f"{start_time.isoformat()} → {end_time.isoformat()}"
+                    dep_result["alarm_timestamp_used"] = alarm_timestamp if alarm_timestamp else "current time"
+
                     logger.info("Fetched %d ERROR logs from %s", len(events), dep)
                 else:
                     dep_result["message"] = f"No log group found for dependency '{dep}'"
                     logger.warning("No log group found for dependency: %s", dep)
-                    
+
             except Exception as e:
                 dep_result["error"] = str(e)
                 logger.error("Error processing dependency %s: %s", dep, e)
-            
+
             results["dependency_results"].append(dep_result)
-        
+
         # Add summary
         total_errors = sum(r["error_count"] for r in results["dependency_results"])
         results["summary"] = {
@@ -284,9 +315,9 @@ def check_service_dependencies(alarm_name: str, region: str = "ap-south-1") -> s
                 f"{'Root cause likely in dependencies.' if total_errors > 0 else 'Dependencies look healthy.'}"
             )
         }
-        
+
         return json.dumps(results, indent=2, default=str)
-        
+
     except Exception as e:
         logger.error("check_service_dependencies failed: %s", e)
         return json.dumps({

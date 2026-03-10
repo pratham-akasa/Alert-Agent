@@ -10,8 +10,14 @@ Automatically check service dependencies and fetch their logs to find root cause
 
 ## How to Use
 ```python
-check_service_dependencies(alarm_name="qp-booking-service-common-error", region="ap-south-1")
+check_service_dependencies(
+    alarm_name="qp-booking-service-common-error", 
+    region="ap-south-1",
+    alarm_timestamp="Monday 09 March, 2026 04:08:18 UTC"
+)
 ```
+
+**IMPORTANT**: Always pass the `alarm_timestamp` from the parsed alarm email to ensure logs are fetched from the correct time window when the alarm fired.
 
 ## What It Does Automatically
 1. Extracts the service name from the alarm
@@ -30,8 +36,11 @@ Returns JSON with:
 
 ## Example
 ```python
-# Just call it once with the alarm name
-check_service_dependencies(alarm_name="qp-booking-service-common-error")
+# Call it with the alarm name and timestamp from the parsed email
+check_service_dependencies(
+    alarm_name="qp-booking-service-common-error",
+    alarm_timestamp="Monday 09 March, 2026 04:08:18 UTC"
+)
 
 # Returns:
 # {

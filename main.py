@@ -24,6 +24,7 @@ from framework.tools.cloudwatch_fetcher import fetch_cloudwatch_logs
 # from framework.tools.service_registry import fetch_service_info  # TODO: Enable when services.yaml is needed
 from framework.tools.log_group_discovery import search_log_groups, discover_log_group
 from framework.tools.dependency_checker import check_service_dependencies
+from framework.tools.comprehensive_validator import validate_investigation_logs
 # from framework.tools.teams_notifier import notify_teams  # TODO: Enable when Teams webhook is configured
 
 # ── Logging ────────────────────────────────────────────────────────────
@@ -43,6 +44,7 @@ ALL_TOOLS = [
     discover_log_group,
     search_log_groups,
     check_service_dependencies,
+    validate_investigation_logs,
     # fetch_service_info,  # TODO: Enable when services.yaml is needed
     # notify_teams,  # TODO: Enable when Teams webhook is configured
 ]
@@ -58,7 +60,7 @@ SAMPLE_BODY = """You are receiving this email because your Amazon CloudWatch Ala
 - Description: Common error alarm for booking service
 - State Change: OK -> ALARM
 - Reason for State Change: Threshold Crossed: 1 datapoint [5.0 (20/02/26 04:08:00)] was greater than or equal to the threshold (1.0).
-- Timestamp: Wednesday 04 March, 2026 04:08:18 UTC
+- Timestamp: Monday 09 March, 2026 04:08:18 UTC
 - AWS Account: 471112573018
 - Alarm Arn: arn:aws:cloudwatch:ap-south-1:471112573018:alarm:qp-booking-service-common-error
 - MetricName: ErrorCount
