@@ -24,7 +24,7 @@ def _get_webhook_url() -> str:
 
     # Fall back to config.yaml
     try:
-        from framework.config import Config
+        from framework.core.config import Config
         config = Config()
         return config.teams_config.get("webhook_url", "")
     except Exception:

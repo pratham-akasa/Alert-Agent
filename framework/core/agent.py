@@ -5,7 +5,6 @@ Uses LangChain's ReAct agent with ChatOllama to reason about events,
 select and execute tools, and persist results to memory.
 """
 
-import glob
 import json
 import logging
 import os
@@ -16,16 +15,18 @@ from langchain_core.tools import tool
 from langchain_ollama import ChatOllama
 from langgraph.prebuilt import create_react_agent
 
-from framework.config import Config
-from framework.memory import Memory
+from framework.core.config import Config
+from framework.core.memory import Memory
 from framework.events.base import Event
-from framework.conversation_logger import ConversationLogger
+from framework.core.conversation_logger import ConversationLogger
 
 logger = logging.getLogger(__name__)
 
 # ── System prompt ──────────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """You are an AWS alert handler. You MUST respond ONLY in English language.
+
+**CRITICAL REFERENCE**: You have access to investigation_summary_skill.md which contains the MANDATORY format for investigation summaries. You MUST use this exact format for your final summary.
 
 CRITICAL LANGUAGE RULE: 
 - Write ALL responses in English
@@ -36,13 +37,43 @@ Execute ALL steps automatically without asking for permission.
 
 WORKFLOW (execute in order):
 1. parse_aws_alert_email → Extract alarm_name and timestamp from email
+    CRITICAL: Use the EXACT email body from the event payload above
+    CRITICAL: Do NOT use placeholder text like "This is a sample email body"
+    CRITICAL: Extract the "body" field from the JSON payload and pass it to parse_aws_alert_email
 2. discover_log_group(alarm_name=<alarm_name>) → Get best_log_group
 3. fetch_cloudwatch_logs(log_group_name=<best_log_group>, filter_pattern="ERROR", minutes_back=10, alarm_timestamp=<timestamp>)
     CRITICAL: Use the EXACT log_group_name from step 2's "best_log_group" field
     CRITICAL: Use the timestamp from step 1's parse output as alarm_timestamp parameter
 4. check_service_dependencies(alarm_name=<alarm_name>, alarm_timestamp=<timestamp>) - MANDATORY, automatically checks ALL dependencies
-5. validate_investigation_logs(primary_logs_response=<step3_output>, dependency_logs_response=<step4_output>, alarm_timestamp=<timestamp>) - MANDATORY validation of ALL services
-6. Analyze all logs (primary + dependencies) and provide summary IN ENGLISH ONLY
+5. CREATE INVESTIGATION SUMMARY - **MANDATORY STEP**
+   - **YOU MUST USE THIS EXACT FORMAT:**
+   ```
+   ---
+   ## 🔍 INVESTIGATION SUMMARY
+
+   ### 1. WHERE IT HAPPENED
+   - Primary Service: [extract from discover_log_group output]
+   - Primary Log Group: [extract from discover_log_group output]
+   - Affected Dependencies: [extract from check_service_dependencies output]
+
+   ### 2. WHAT HAPPENED
+   - Error Type: [extract from actual log messages]
+   - Error Message: [copy exact error from logs]
+   - Error Count: [extract from tool outputs]
+   - Sample Error: [paste actual error message]
+
+   ### 3. WHY IT HAPPENED (Root Cause)
+   - Root Cause: [analyze the specific error type]
+   - Contributing Factors: [additional factors]
+
+   ### 4. POSSIBLE SOLUTIONS
+   1. [Technical solution based on error type]
+   2. [Second technical solution]
+   3. [Third technical solution if applicable]
+   ---
+   ```
+   - **EXTRACT real data** from your tool outputs (steps 1-4)
+   - **NEVER make up information** - use actual data from tool responses
 
 RULES:
 - Execute all steps automatically - do NOT ask for permission
@@ -52,75 +83,61 @@ RULES:
 - ALWAYS pass the "timestamp" from parse_aws_alert_email as "alarm_timestamp" to fetch_cloudwatch_logs
 - ALWAYS use the exact alarm_name from the email - do NOT change it
 - ALWAYS call check_service_dependencies in step 4 with the alarm_timestamp - it automatically handles all dependencies
-- ALWAYS call validate_investigation_logs in step 5 to validate ALL services (primary + dependencies)
 - The dependency checker is fully automated - it discovers log groups and fetches logs for ALL dependencies
-- The validation step is MANDATORY - it ensures all logs were fetched from correct time windows
-- Only provide final summary after completing ALL steps including validation
+- **MANDATORY**: You MUST complete ALL 4 steps before providing any final response
+- **MANDATORY**: Your final response MUST use the exact investigation summary format from step 5
+- Do NOT provide generic responses like "please provide the actual email body"
+- Do NOT stop early with partial results
+- If any step fails, continue with remaining steps and note failures in the summary
 - WRITE YOUR ENTIRE RESPONSE IN ENGLISH - NO EXCEPTIONS
+
+**CRITICAL FINAL STEP**: After completing all 4 steps, you MUST provide the investigation summary using the EXACT format shown in step 5 above. This is NOT optional - operations teams require this specific structure.
+
+**FAILURE HANDLING**: If critical steps fail (e.g., invalid timestamp, parser errors):
+- Continue with remaining steps where possible
+- Mark the investigation as "INCOMPLETE" in the summary
+- Explain what failed and why in the summary
+- Do NOT provide generic chat responses
 
 ## FINAL SUMMARY FORMAT (MANDATORY)
 
-After completing all tool calls, you MUST provide a structured analysis following this EXACT format:
+After completing all tool calls, you MUST provide a structured analysis following the EXACT format specified in the "investigation_summary_skill.md". 
 
+**CRITICAL INSTRUCTIONS:**
+1. **READ the investigation_summary_skill.md** - This contains the EXACT format you must follow
+2. **Use the 4-section structure** with 🔍 emoji exactly as shown in the skill file
+3. **Extract REAL data** from your tool outputs - never make up information
+4. **Follow the examples** in the skill file for proper structure
+5. **Use the quality checklist** in the skill file to validate your summary
+
+**MANDATORY FORMAT (from investigation_summary_skill.md):**
+```
 ---
 ## 🔍 INVESTIGATION SUMMARY
 
 ### 1. WHERE IT HAPPENED
-[List the specific services and log groups where errors occurred]
-- Primary Service: [service name]
-- Primary Log Group: [log group path]
-- Affected Dependencies: [list any dependencies with errors]
+- Primary Service: [extract from discover_log_group output]
+- Primary Log Group: [extract from discover_log_group output] 
+- Affected Dependencies: [extract from check_service_dependencies output]
 
 ### 2. WHAT HAPPENED
-[Describe the specific error from the actual log messages]
-- Error Type: [exact error type from logs]
-- Error Message: [actual error message from logs]
-- Error Count: [number of occurrences]
-- Sample Error: [paste a sample error message]
+- Error Type: [extract from actual log messages]
+- Error Message: [copy exact error from logs]
+- Error Count: [extract from tool outputs]
+- Sample Error: [paste actual error message]
 
 ### 3. WHY IT HAPPENED (Root Cause)
-[Analyze the error to determine the root cause based on the actual error messages]
-- Root Cause: [specific technical reason]
-- Contributing Factors: [any additional factors]
+- Root Cause: [analyze the specific error type]
+- Contributing Factors: [additional factors]
 
 ### 4. POSSIBLE SOLUTIONS
-[Provide 2-3 specific, actionable solutions]
-1. [First solution with technical details]
-2. [Second solution with technical details]
-3. [Third solution with technical details]
+1. [Technical solution based on error type]
+2. [Second technical solution]
+3. [Third technical solution if applicable]
 ---
+```
 
-CRITICAL RULES FOR SUMMARY:
-- You MUST use the EXACT format above with the emoji and section headers
-- You MUST extract actual error messages from the tool outputs
-- You MUST NOT provide generic descriptions - use specific details from the logs
-- You MUST analyze the actual error type (e.g., UnrecognizedPropertyException, TimeoutException, etc.)
-- You MUST provide technical, actionable solutions based on the specific error
-
-EXAMPLE OF GOOD SUMMARY:
----
-## 🔍 INVESTIGATION SUMMARY
-
-### 1. WHERE IT HAPPENED
-- Identify the specific service(s) and log group(s) where errors occurred
-- Include both primary service and any affected dependencies
-- Example: "Errors occurred in data-transfer-service (/copilot/qp-prod-data-transfer-service)"
-
-### 2. WHAT HAPPENED
-- Describe the specific error from the log messages
-- Extract the actual error type and message from the logs
-- Example: "UnrecognizedPropertyException: Field 'DelayReasonCode.Custom' not recognized in DelayDetail class"
-
-### 3. WHY IT HAPPENED (Root Cause)
-- Analyze the error to determine the root cause
-- Consider: data format issues, API changes, configuration problems, dependency failures
-- Example: "The incoming data contains a field 'DelayReasonCode.Custom' that doesn't match the expected schema"
-
-### 4. POSSIBLE SOLUTIONS
-- Provide 2-3 actionable solutions
-- Be specific and technical
-
-DO NOT provide generic summaries. ALWAYS analyze the actual error messages from the logs.
+**YOU MUST USE THIS EXACT FORMAT** - The investigation summary is the most important output for operations teams.
 
 ## Available Skills
 {skills_context}
@@ -181,12 +198,16 @@ class Agent:
         self.config = config
         self.memory = memory
         _memory_ref = memory  # expose to the store_correction tool
-        self.tools = tools + [store_correction]  # always include correction tool
-        self.conv_logger = ConversationLogger(log_dir="logs")
         
         # Initialize context manager to prevent value drift
-        from framework.context_manager import ContextManager
+        from framework.core.context_manager import ContextManager
         self.context_manager = ContextManager()
+        
+        # Wrap tools with context correction
+        self.original_tools = tools
+        self.tools = self._wrap_tools_with_context(tools) + [store_correction]
+        
+        self.conv_logger = ConversationLogger(log_dir="logs")
 
         agent_cfg = config.agent_config
         self.max_iterations = agent_cfg.get("max_iterations", 10)
@@ -270,17 +291,32 @@ class Agent:
                     tools_used.add(tc.get('name', ''))
             
             # Required tools for alarm investigation
-            required_tools = {'parse_aws_alert_email', 'discover_log_group', 'fetch_cloudwatch_logs', 'check_service_dependencies', 'validate_investigation_logs'}
+            required_tools = {'parse_aws_alert_email', 'discover_log_group', 'fetch_cloudwatch_logs', 'check_service_dependencies'}
             missing_tools = required_tools - tools_used
             
             if missing_tools and event.source == "email":
                 logger.warning("Agent did not use required tools: %s", missing_tools)
                 # Add context summary to help agent
                 context_summary = self.context_manager.get_summary()
+                
+                # Be more specific about what's missing
+                missing_steps = []
+                if 'parse_aws_alert_email' in missing_tools:
+                    missing_steps.append("1. parse_aws_alert_email - Extract alarm details from the email body in the payload above")
+                if 'discover_log_group' in missing_tools:
+                    missing_steps.append("2. discover_log_group - Find the correct log group for the alarm")
+                if 'fetch_cloudwatch_logs' in missing_tools:
+                    missing_steps.append("3. fetch_cloudwatch_logs - Fetch logs from the discovered log group")
+                if 'check_service_dependencies' in missing_tools:
+                    missing_steps.append("4. check_service_dependencies - Check all service dependencies")
+                
                 follow_up = (
-                    f"You have not completed the investigation. You MUST call these tools: {', '.join(missing_tools)}.\n"
-                    f"{context_summary}\n"
-                    f"Use the EXACT values from the context above. Continue now."
+                    f"INVESTIGATION INCOMPLETE. You MUST complete these missing steps:\n\n"
+                    f"{chr(10).join(missing_steps)}\n\n"
+                    f"CRITICAL: Use the EXACT email body from the payload above, not placeholder text.\n"
+                    f"CRITICAL: After completing ALL steps, provide the structured investigation summary.\n\n"
+                    f"Current context: {context_summary}\n\n"
+                    f"Continue the investigation now - do NOT provide a generic response."
                 )
                 result = self.agent.invoke(
                     {"messages": messages + [("user", follow_up)]},
@@ -291,6 +327,39 @@ class Agent:
 
             # Extract the final AI message
             final_message = result["messages"][-1].content
+            
+            # Check if the response contains the required investigation summary format
+            if event.source == "email" and "🔍 INVESTIGATION SUMMARY" not in final_message:
+                logger.warning("Final response missing required investigation summary format")
+                summary_reminder = (
+                    "Your response is missing the required investigation summary format. "
+                    "You MUST provide a summary using this EXACT format:\n\n"
+                    "---\n"
+                    "## 🔍 INVESTIGATION SUMMARY\n\n"
+                    "### 1. WHERE IT HAPPENED\n"
+                    "- Primary Service: [extract from your investigation]\n"
+                    "- Primary Log Group: [extract from your investigation]\n"
+                    "- Affected Dependencies: [extract from your investigation]\n\n"
+                    "### 2. WHAT HAPPENED\n"
+                    "- Error Type: [extract from actual log messages or mark as 'No errors found']\n"
+                    "- Error Message: [copy exact error from logs or 'No error messages']\n"
+                    "- Error Count: [extract from tool outputs]\n"
+                    "- Sample Error: [paste actual error message or 'N/A']\n\n"
+                    "### 3. WHY IT HAPPENED (Root Cause)\n"
+                    "- Root Cause: [analyze the specific error type or investigation findings]\n"
+                    "- Contributing Factors: [additional factors or 'Investigation incomplete']\n\n"
+                    "### 4. POSSIBLE SOLUTIONS\n"
+                    "1. [Technical solution based on findings]\n"
+                    "2. [Second technical solution]\n"
+                    "3. [Third technical solution if applicable]\n"
+                    "---\n\n"
+                    "Provide this summary now based on your investigation results."
+                )
+                result = self.agent.invoke(
+                    {"messages": result["messages"] + [("user", summary_reminder)]},
+                    config={"recursion_limit": self.max_iterations},
+                )
+                final_message = result["messages"][-1].content
             
             duration = time.time() - start_time
             logger.info("Agent response (%.1fs): %s", duration, final_message[:200])
@@ -347,6 +416,47 @@ class Agent:
                 content = getattr(msg, 'content', '')
                 if tool_name:
                     self.context_manager.update_from_tool_output(tool_name, content)
+    
+    def _wrap_tools_with_context(self, tools: list):
+        """Wrap tools to apply context corrections before execution."""
+        from functools import wraps
+        from langchain_core.tools import StructuredTool
+        
+        logger.info("🔧 Wrapping %d tools with context correction", len(tools))
+        
+        wrapped_tools = []
+        for tool in tools:
+            original_func = tool.func
+            tool_name = tool.name
+            
+            logger.info("🔧 Wrapping tool: %s", tool_name)
+            
+            @wraps(original_func)
+            def wrapped_func(*args, _tool_name=tool_name, _original=original_func, **kwargs):
+                logger.info("🔧 Tool wrapper called for: %s", _tool_name)
+                
+                # Apply context corrections to kwargs
+                corrected_kwargs = self.context_manager.validate_and_correct_params(_tool_name, kwargs)
+                
+                # Call original function with corrected params
+                result = _original(*args, **corrected_kwargs)
+                
+                # Update context with result
+                self.context_manager.update_from_tool_output(_tool_name, result)
+                
+                return result
+            
+            # Create new tool with wrapped function
+            wrapped_tool = StructuredTool(
+                name=tool.name,
+                description=tool.description,
+                func=wrapped_func,
+                args_schema=tool.args_schema
+            )
+            wrapped_tools.append(wrapped_tool)
+        
+        logger.info("✅ Successfully wrapped %d tools", len(wrapped_tools))
+        return wrapped_tools
 
     def process_text(self, text: str) -> str:
         """
@@ -381,19 +491,26 @@ class Agent:
 
     @staticmethod
     def _load_skills() -> str:
-        """Load all *_skill.md files from the tools directory."""
-        skills_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), "tools"
-        )
-        skill_files = glob.glob(os.path.join(skills_dir, "*_skill.md"))
+        """Load all SKILL.md files from the skills directory."""
+        from framework.core.config import get_repo_root
+        
+        # Use centralized repo root resolution
+        skills_dir = os.path.join(get_repo_root(), "framework", "skills")
         sections = []
-        for path in sorted(skill_files):
-            name = os.path.basename(path).replace("_skill.md", "")
-            try:
-                with open(path, "r") as f:
-                    content = f.read()
-                sections.append(f"### Skill: {name}\n{content}")
-                logger.info("Loaded skill: %s", name)
-            except Exception as e:
-                logger.warning("Could not load skill %s: %s", path, e)
+        
+        # Look for SKILL.md files in each skill subdirectory
+        if os.path.exists(skills_dir):
+            for skill_folder in sorted(os.listdir(skills_dir)):
+                skill_path = os.path.join(skills_dir, skill_folder)
+                if os.path.isdir(skill_path):
+                    skill_file = os.path.join(skill_path, "SKILL.md")
+                    if os.path.exists(skill_file):
+                        try:
+                            with open(skill_file, "r") as f:
+                                content = f.read()
+                            sections.append(f"### Skill: {skill_folder}\n{content}")
+                            logger.info("Loaded skill: %s", skill_folder)
+                        except Exception as e:
+                            logger.warning("Could not load skill %s: %s", skill_file, e)
+        
         return "\n---\n".join(sections) if sections else "No skill files found."

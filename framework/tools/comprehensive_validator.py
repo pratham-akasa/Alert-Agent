@@ -27,15 +27,47 @@ def validate_investigation_logs(
     - Timestamps are consistent across all log fetches
     
     Args:
-        primary_logs_response: JSON response from fetch_cloudwatch_logs for primary service
-        dependency_logs_response: JSON response from check_service_dependencies
+        primary_logs_response: JSON STRING response from fetch_cloudwatch_logs for primary service (must be a string, not a dict)
+        dependency_logs_response: JSON STRING response from check_service_dependencies (must be a string, not a dict)
         alarm_timestamp: The original alarm timestamp from parse_aws_alert_email
         expected_minutes_back: Expected minutes back from alarm time (default 10)
     
     Returns:
         Comprehensive validation report for all services with pass/fail status
+        
+    IMPORTANT: This tool expects STRING parameters containing JSON data, not dictionary objects.
+    Pass the raw tool output strings from fetch_cloudwatch_logs and check_service_dependencies.
     """
     try:
+        # EMERGENCY FIX: If agent passes dict objects instead of strings, handle it
+        if isinstance(primary_logs_response, dict):
+            logger.warning("⚠️ EMERGENCY FIX: primary_logs_response is dict, converting to JSON string")
+            primary_logs_response = json.dumps(primary_logs_response, default=str)
+        
+        if isinstance(dependency_logs_response, dict):
+            logger.warning("⚠️ EMERGENCY FIX: dependency_logs_response is dict, converting to JSON string")
+            dependency_logs_response = json.dumps(dependency_logs_response, default=str)
+        
+        # EMERGENCY FIX: If agent passes empty strings, try to get from global context
+        # This is a fallback when the tool wrapper doesn't work
+        if not primary_logs_response or primary_logs_response == '':
+            logger.warning("⚠️ EMERGENCY FIX: primary_logs_response is empty, this should not happen")
+            return json.dumps({
+                "status": "error",
+                "message": "primary_logs_response is empty - tool wrapper system failed",
+                "alarm_timestamp": alarm_timestamp,
+                "fix_needed": "Check tool wrapper implementation"
+            }, indent=2)
+        
+        if not dependency_logs_response or dependency_logs_response == '':
+            logger.warning("⚠️ EMERGENCY FIX: dependency_logs_response is empty, this should not happen")
+            return json.dumps({
+                "status": "error", 
+                "message": "dependency_logs_response is empty - tool wrapper system failed",
+                "alarm_timestamp": alarm_timestamp,
+                "fix_needed": "Check tool wrapper implementation"
+            }, indent=2)
+        
         # Parse alarm timestamp
         alarm_time = _parse_alarm_timestamp(alarm_timestamp)
         if not alarm_time:

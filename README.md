@@ -459,7 +459,7 @@ aws logs describe-log-groups --region ap-south-1
 curl http://localhost:11434/api/tags
 
 # Validate configuration
-python -c "from framework.config import Config; print(Config().ollama_model)"
+python -c "from framework.core.config import Config; print(Config().ollama_model)"
 ```
 
 ## 📈 Performance & Scaling

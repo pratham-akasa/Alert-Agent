@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 def _get_cloudwatch_client(region: str = None, profile: str = None):
     """Create a boto3 CloudWatch Logs client."""
     import boto3
-    from framework.config import Config
+    from framework.core.config import Config
 
     config = Config()
     aws_config = config.aws_config

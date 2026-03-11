@@ -119,7 +119,7 @@ def _rank_log_groups(log_groups: list[dict]) -> list[dict]:
 def _get_resource_explorer_client(region: str = None):
     """Create a boto3 Resource Explorer client."""
     import boto3
-    from framework.config import Config
+    from framework.core.config import Config
 
     config = Config()
     aws_config = config.aws_config

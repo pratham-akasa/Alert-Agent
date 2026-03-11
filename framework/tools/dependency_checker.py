@@ -105,7 +105,15 @@ def _search_for_dependency_log_group(re_client, dependency_name: str, region: st
 
 
 def _parse_dependencies_from_kb(service_name: str) -> list[str]:
-    file_path = os.path.join(os.path.dirname(__file__), "service_dependencies_kb.md")
+    """Parse service dependencies from the knowledge base file."""
+    from framework.core.config import get_repo_root
+    
+    # The KB file is now in the service-registry skill references
+    file_path = os.path.join(
+        get_repo_root(), 
+        "framework", "skills", "service-registry", "references", "service_dependencies_kb.md"
+    )
+    
     if not os.path.exists(file_path):
         logger.warning("Dependencies KB file not found at %s", file_path)
         return []

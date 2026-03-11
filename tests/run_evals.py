@@ -13,12 +13,13 @@ import sys
 import tempfile
 
 # Ensure project root is on the path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from framework.core.config import get_repo_root
+sys.path.insert(0, get_repo_root())
 
 from tests.golden_evals import GOLDEN_CASES
 from framework.tools.email_parser import parse_aws_alert_email
 from framework.tools.service_registry import fetch_service_info, _load_registry, lookup_by_alarm
-from framework.memory import Memory
+from framework.core.memory import Memory
 
 
 # ── Test Helpers ──────────────────────────────────────────────────────────
@@ -237,8 +238,8 @@ def run_agent_evals() -> list[EvalResult]:
     print("=" * 60)
 
     try:
-        from framework.config import Config
-        from framework.agent import Agent
+        from framework.core.config import Config
+        from framework.core.agent import Agent
         from framework.events.base import Event
 
         from framework.tools.service_registry import fetch_service_info

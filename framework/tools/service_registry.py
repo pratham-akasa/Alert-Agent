@@ -30,10 +30,8 @@ def _load_registry(path: str = None) -> dict:
         return _registry_data
 
     if path is None:
-        path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            "services.yaml",
-        )
+        from framework.core.config import get_services_path
+        path = get_services_path()
 
     if not os.path.exists(path):
         logger.warning("Service registry not found at %s", path)
