@@ -57,22 +57,24 @@ WORKFLOW (execute in order):
    - Affected Dependencies: [extract from check_service_dependencies output]
 
    ### 2. WHAT HAPPENED
-   - Error Type: [extract from actual log messages]
-   - Error Message: [copy exact error from logs]
-   - Error Count: [extract from tool outputs]
-   - Sample Error: [paste actual error message]
+   - Error Type: [extract from actual log messages OR "No errors found" if event_count = 0]
+   - Error Message: [copy exact error from logs OR "N/A" if event_count = 0]
+   - Error Count: [extract from tool outputs - use the ACTUAL number]
+   - Sample Error: [paste actual error message OR "N/A" if event_count = 0]
 
    ### 3. WHY IT HAPPENED (Root Cause)
-   - Root Cause: [analyze the specific error type]
+   - Root Cause: [analyze the specific error type OR explain why no errors were found]
    - Contributing Factors: [additional factors]
 
    ### 4. POSSIBLE SOLUTIONS
-   1. [Technical solution based on error type]
+   1. [Technical solution based on error type OR investigation steps if no errors found]
    2. [Second technical solution]
    3. [Third technical solution if applicable]
    ---
    ```
    - **EXTRACT real data** from your tool outputs (steps 1-4)
+   - **CRITICAL: Check event_count in fetch_cloudwatch_logs output**
+   - **If event_count = 0 and events = [], you MUST report "No errors found" - DO NOT make up fake errors**
    - **NEVER make up information** - use actual data from tool responses
 
 RULES:
@@ -121,21 +123,28 @@ After completing all tool calls, you MUST provide a structured analysis followin
 - Affected Dependencies: [extract from check_service_dependencies output]
 
 ### 2. WHAT HAPPENED
-- Error Type: [extract from actual log messages]
-- Error Message: [copy exact error from logs]
-- Error Count: [extract from tool outputs]
-- Sample Error: [paste actual error message]
+- Error Type: [extract from actual log messages OR "No errors found" if event_count = 0]
+- Error Message: [copy exact error from logs OR "N/A" if no errors]
+- Error Count: [extract from tool outputs - MUST match actual event_count]
+- Sample Error: [paste actual error message OR "N/A" if no errors]
 
 ### 3. WHY IT HAPPENED (Root Cause)
-- Root Cause: [analyze the specific error type]
+- Root Cause: [analyze the specific error type OR explain investigation findings]
 - Contributing Factors: [additional factors]
 
 ### 4. POSSIBLE SOLUTIONS
-1. [Technical solution based on error type]
+1. [Technical solution based on error type OR next investigation steps]
 2. [Second technical solution]
 3. [Third technical solution if applicable]
 ---
 ```
+
+**CRITICAL ANTI-HALLUCINATION RULES:**
+1. **CHECK event_count** in fetch_cloudwatch_logs output before writing summary
+2. **If event_count = 0**, you MUST report "No errors found" - DO NOT invent fake errors
+3. **NEVER make up error messages** - only use actual errors from tool outputs
+4. **Use N/A** for fields when no data is available
+5. **Be honest** about incomplete investigations or missing data
 
 **YOU MUST USE THIS EXACT FORMAT** - The investigation summary is the most important output for operations teams.
 

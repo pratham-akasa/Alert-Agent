@@ -103,11 +103,88 @@ class ConversationLogger:
             final_response,
             "",
         ])
+        
+        # Add hallucination detection for AWS alarm investigations
+        if event_type == "aws_alarm":
+            hallucination_warnings = self._detect_hallucinations(tool_calls, final_response)
+            if hallucination_warnings:
+                lines.extend([
+                    "---",
+                    "",
+                    "## ⚠️ HALLUCINATION WARNINGS",
+                    "",
+                ])
+                for warning in hallucination_warnings:
+                    lines.append(f"- {warning}")
+                lines.append("")
 
         with open(filepath, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
 
         return filepath
+    
+    @staticmethod
+    def _detect_hallucinations(tool_calls: list[dict], final_response: str) -> list[str]:
+        """
+        Detect potential hallucinations in the final response by comparing with tool outputs.
+        
+        Returns a list of warning messages if hallucinations are detected.
+        """
+        warnings = []
+        
+        # Check if fetch_cloudwatch_logs returned 0 events
+        for tc in tool_calls:
+            if tc["tool"] == "fetch_cloudwatch_logs" and tc.get("output"):
+                try:
+                    output_str = str(tc["output"])
+                    # Check for event_count: 0 or "event_count": 0
+                    if '"event_count": 0' in output_str or "'event_count': 0" in output_str:
+                        # Now check if final response contains fake errors
+                        error_indicators = [
+                            "NullPointerException",
+                            "java.lang.",
+                            "Error Message:",
+                            "Sample Error:",
+                            "ERROR com.",
+                            "Exception:",
+                        ]
+                        
+                        # Check if response claims errors exist
+                        has_error_claims = any(indicator in final_response for indicator in error_indicators)
+                        has_no_error_acknowledgment = any(phrase in final_response for phrase in [
+                            "No ERROR logs found",
+                            "No errors found",
+                            "event_count: 0",
+                            "Error Count: 0",
+                            "N/A"
+                        ])
+                        
+                        if has_error_claims and not has_no_error_acknowledgment:
+                            warnings.append(
+                                "HALLUCINATION DETECTED: Tool output shows event_count=0 (no errors found), "
+                                "but final response contains fabricated error messages. "
+                                "The agent should report 'No errors found' instead."
+                            )
+                except Exception:
+                    pass
+        
+        # Check if dependency checker found 0 errors but response claims otherwise
+        for tc in tool_calls:
+            if tc["tool"] == "check_service_dependencies" and tc.get("output"):
+                try:
+                    output_str = str(tc["output"])
+                    if '"total_dependency_errors": 0' in output_str or "'total_dependency_errors': 0" in output_str:
+                        if "dependency" in final_response.lower() and any(word in final_response for word in ["error", "ERROR", "Exception"]):
+                            # Check if it's properly reporting no dependency errors
+                            if "0 ERROR logs" not in final_response and "Dependencies look healthy" not in final_response:
+                                warnings.append(
+                                    "POTENTIAL HALLUCINATION: Dependency checker found 0 errors, "
+                                    "but response may be claiming dependency errors exist."
+                                )
+                except Exception:
+                    pass
+        
+        return warnings
 
     @staticmethod
     def _extract_tool_interactions(messages: list[Any]) -> list[dict]:
