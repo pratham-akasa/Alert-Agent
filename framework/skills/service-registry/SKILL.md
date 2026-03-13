@@ -3,9 +3,9 @@ name: service-registry
 description: Look up service information including log groups, owner teams, dependencies, and operational context. Use when you need comprehensive service details for investigation or notification purposes.
 compatibility: Designed for internal service registry lookups
 allowed-tools: service_registry
-metadata:
-  owner: platform-team
-  version: "1.0"
+# metadata:
+#   owner: platform-team
+#   version: "1.0"
 ---
 
 # Service Registry Lookup

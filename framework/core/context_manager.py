@@ -162,6 +162,36 @@ class ContextManager:
         corrected = params.copy()
         corrections_made = []
         
+        # AUTO-INJECT alarm_timestamp for time-sensitive tools if missing
+        if tool_name in ['fetch_cloudwatch_logs', 'check_service_dependencies']:
+            if not params.get('alarm_timestamp'):
+                locked_timestamp = self.get_locked_value('alarm_timestamp')
+                if locked_timestamp:
+                    logger.warning("⚠️ AUTO-INJECTING alarm_timestamp for %s: %s", tool_name, locked_timestamp)
+                    corrected['alarm_timestamp'] = locked_timestamp
+                    corrections_made.append(f"alarm_timestamp: missing → {locked_timestamp}")
+                else:
+                    logger.error("❌ CRITICAL: No alarm_timestamp in context for %s!", tool_name)
+            else:
+                # Validate provided timestamp
+                if not self._is_valid_timestamp_string(str(params['alarm_timestamp'])):
+                    logger.error("❌ Invalid alarm_timestamp format for %s: %s", tool_name, params['alarm_timestamp'])
+                    # Try to use locked timestamp instead
+                    locked_timestamp = self.get_locked_value('alarm_timestamp')
+                    if locked_timestamp:
+                        logger.warning("⚠️ REPLACING invalid timestamp with locked value: %s", locked_timestamp)
+                        corrected['alarm_timestamp'] = locked_timestamp
+                        corrections_made.append(f"alarm_timestamp: invalid → {locked_timestamp}")
+        
+        # AUTO-INJECT log_group_name for fetch_cloudwatch_logs if missing
+        if tool_name == 'fetch_cloudwatch_logs':
+            if not params.get('log_group_name') and not params.get('log_group'):
+                locked_log_group = self.get_locked_value('log_group_name')
+                if locked_log_group:
+                    logger.warning("⚠️ AUTO-INJECTING log_group_name: %s", locked_log_group)
+                    corrected['log_group_name'] = locked_log_group
+                    corrections_made.append(f"log_group_name: missing → {locked_log_group}")
+        
         # Special handling for validate_investigation_logs
         if tool_name == 'validate_investigation_logs':
             logger.info("🎯 Special handling for validate_investigation_logs")

@@ -33,6 +33,14 @@ CRITICAL LANGUAGE RULE:
 - Do NOT use Chinese, Japanese, Korean, or any other language
 - If you start writing in another language, STOP and rewrite in English
 
+**CRITICAL EMAIL BODY RULE:**
+- You MUST use the EXACT email body from the event payload above
+- The email body is in the JSON field "body" in the payload
+- Do NOT generate fake email bodies with headers like "From: AWS Alerts <alerts@example.com>"
+- Do NOT use test data like "BookingController.createBooking() throwing NullPointerException"
+- Do NOT create example emails - use ONLY the real email body provided
+- If you use any email body other than the exact one from the payload, the investigation will FAIL
+
 Execute ALL steps automatically without asking for permission.
 
 WORKFLOW (execute in order):
@@ -40,11 +48,17 @@ WORKFLOW (execute in order):
     CRITICAL: Use the EXACT email body from the event payload above
     CRITICAL: Do NOT use placeholder text like "This is a sample email body"
     CRITICAL: Extract the "body" field from the JSON payload and pass it to parse_aws_alert_email
+    CRITICAL: Save the "timestamp" field from the output - you MUST use it in steps 3 and 4
 2. discover_log_group(alarm_name=<alarm_name>) → Get best_log_group
+    CRITICAL: Save the "best_log_group" value - you MUST use it in step 3
 3. fetch_cloudwatch_logs(log_group_name=<best_log_group>, filter_pattern="ERROR", minutes_back=10, alarm_timestamp=<timestamp>)
     CRITICAL: Use the EXACT log_group_name from step 2's "best_log_group" field
     CRITICAL: Use the timestamp from step 1's parse output as alarm_timestamp parameter
+    CRITICAL: The alarm_timestamp parameter is MANDATORY - do NOT skip it
+    CRITICAL: If you skip alarm_timestamp, you will investigate the WRONG time window
 4. check_service_dependencies(alarm_name=<alarm_name>, alarm_timestamp=<timestamp>) - MANDATORY, automatically checks ALL dependencies
+    CRITICAL: Use the SAME timestamp from step 1 as alarm_timestamp parameter
+    CRITICAL: The alarm_timestamp parameter is MANDATORY - do NOT skip it
 5. CREATE INVESTIGATION SUMMARY - **MANDATORY STEP**
    - **YOU MUST USE THIS EXACT FORMAT:**
    ```
@@ -295,9 +309,20 @@ class Agent:
             messages = result["messages"]
             tool_calls = [msg for msg in messages if hasattr(msg, 'tool_calls') and msg.tool_calls]
             tools_used = set()
+            alarm_timestamp_used = False
+            
             for msg in tool_calls:
                 for tc in msg.tool_calls:
-                    tools_used.add(tc.get('name', ''))
+                    tool_name = tc.get('name', '')
+                    tools_used.add(tool_name)
+                    
+                    # Check if alarm_timestamp was passed to critical tools
+                    if tool_name in ('fetch_cloudwatch_logs', 'check_service_dependencies'):
+                        args = tc.get('args', {})
+                        if args.get('alarm_timestamp'):
+                            alarm_timestamp_used = True
+                        else:
+                            logger.error("❌ CRITICAL: %s called WITHOUT alarm_timestamp parameter!", tool_name)
             
             # Required tools for alarm investigation
             required_tools = {'parse_aws_alert_email', 'discover_log_group', 'fetch_cloudwatch_logs', 'check_service_dependencies'}
@@ -315,9 +340,9 @@ class Agent:
                 if 'discover_log_group' in missing_tools:
                     missing_steps.append("2. discover_log_group - Find the correct log group for the alarm")
                 if 'fetch_cloudwatch_logs' in missing_tools:
-                    missing_steps.append("3. fetch_cloudwatch_logs - Fetch logs from the discovered log group")
+                    missing_steps.append("3. fetch_cloudwatch_logs - Fetch logs from the discovered log group WITH alarm_timestamp")
                 if 'check_service_dependencies' in missing_tools:
-                    missing_steps.append("4. check_service_dependencies - Check all service dependencies")
+                    missing_steps.append("4. check_service_dependencies - Check all service dependencies WITH alarm_timestamp")
                 
                 follow_up = (
                     f"INVESTIGATION INCOMPLETE. You MUST complete these missing steps:\n\n"
@@ -326,6 +351,27 @@ class Agent:
                     f"CRITICAL: After completing ALL steps, provide the structured investigation summary.\n\n"
                     f"Current context: {context_summary}\n\n"
                     f"Continue the investigation now - do NOT provide a generic response."
+                )
+                result = self.agent.invoke(
+                    {"messages": messages + [("user", follow_up)]},
+                    config={"recursion_limit": self.max_iterations},
+                )
+                # Update context again
+                self._update_context_from_messages(result["messages"])
+            
+            # Check if alarm_timestamp was missing (even if tools were called)
+            elif not alarm_timestamp_used and event.source == "email" and 'fetch_cloudwatch_logs' in tools_used:
+                logger.error("❌ CRITICAL: Tools were called but alarm_timestamp was NOT passed!")
+                follow_up = (
+                    "❌ CRITICAL ERROR DETECTED:\n\n"
+                    "You called fetch_cloudwatch_logs and/or check_service_dependencies WITHOUT the alarm_timestamp parameter.\n"
+                    "This means you investigated the WRONG time window (current time instead of alarm time).\n\n"
+                    "You MUST:\n"
+                    "1. Extract the 'timestamp' field from parse_aws_alert_email output\n"
+                    "2. Call fetch_cloudwatch_logs again WITH alarm_timestamp parameter\n"
+                    "3. Call check_service_dependencies again WITH alarm_timestamp parameter\n\n"
+                    "The alarm_timestamp parameter is MANDATORY for correct investigation.\n"
+                    "Redo steps 3 and 4 now with the correct timestamp."
                 )
                 result = self.agent.invoke(
                     {"messages": messages + [("user", follow_up)]},

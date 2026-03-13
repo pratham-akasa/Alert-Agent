@@ -74,6 +74,13 @@ def fetch_cloudwatch_logs(
     Returns:
         A JSON string with the fetched log events or an error message.
     """
+    
+    # CRITICAL VALIDATION: Warn if alarm_timestamp is missing
+    if not alarm_timestamp:
+        logger.warning("⚠️ CRITICAL: fetch_cloudwatch_logs called WITHOUT alarm_timestamp - will use current time instead of alarm time!")
+        logger.warning("⚠️ This will likely fetch logs from the WRONG time window!")
+        logger.warning("⚠️ You MUST extract timestamp from parse_aws_alert_email and pass it here!")
+    
     try:
         client = _get_cloudwatch_client(region=region)
 

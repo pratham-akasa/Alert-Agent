@@ -194,6 +194,13 @@ def check_service_dependencies(alarm_name: str, region: str = "ap-south-1", alar
     Returns:
         JSON string with dependency analysis and all fetched logs
     """
+    
+    # CRITICAL VALIDATION: Warn if alarm_timestamp is missing
+    if not alarm_timestamp:
+        logger.warning("⚠️ CRITICAL: check_service_dependencies called WITHOUT alarm_timestamp!")
+        logger.warning("⚠️ Dependencies will be checked at CURRENT time instead of alarm time!")
+        logger.warning("⚠️ You MUST pass the timestamp from parse_aws_alert_email!")
+    
     from framework.tools.log_group_discovery import _get_resource_explorer_client, _search_resource_explorer, _rank_log_groups
     from framework.tools.cloudwatch_fetcher import _get_cloudwatch_client
     from datetime import datetime, timedelta, timezone

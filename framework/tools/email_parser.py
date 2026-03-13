@@ -102,11 +102,32 @@ def parse_aws_alert_email(raw_email_body: str) -> str:
         # Map common region names to AWS region codes
         region_mapping = {
             "Asia Pacific (Mumbai)": "ap-south-1",
+            "Asia Pacific (Singapore)": "ap-southeast-1",
+            "Asia Pacific (Sydney)": "ap-southeast-2",
+            "Asia Pacific (Tokyo)": "ap-northeast-1",
+            "Asia Pacific (Seoul)": "ap-northeast-2",
             "US East (N. Virginia)": "us-east-1",
+            "US East (Ohio)": "us-east-2",
+            "US West (N. California)": "us-west-1",
             "US West (Oregon)": "us-west-2",
             "Europe (Ireland)": "eu-west-1",
+            "Europe (London)": "eu-west-2",
+            "Europe (Paris)": "eu-west-3",
+            "Europe (Frankfurt)": "eu-central-1",
+            "Canada (Central)": "ca-central-1",
+            "South America (São Paulo)": "sa-east-1",
         }
-        result["region"] = region_mapping.get(region_text, region_text.lower().replace(" ", "-").replace("(", "").replace(")", ""))
+        # Try exact match first
+        if region_text in region_mapping:
+            result["region"] = region_mapping[region_text]
+        else:
+            # Fallback: try to extract region code if it's already in the text
+            region_code_match = re.search(r'([a-z]+-[a-z]+-\d+)', region_text.lower())
+            if region_code_match:
+                result["region"] = region_code_match.group(1)
+            else:
+                # Last resort: sanitize the text
+                result["region"] = region_text.lower().replace(" ", "-").replace("(", "").replace(")", "")
 
     # Alarm name: try specific "- Name:" format first, then generic
     name_match = re.search(r"^-\s*Name\s*:\s*(.+?)\s*$", raw_email_body, re.IGNORECASE | re.MULTILINE)

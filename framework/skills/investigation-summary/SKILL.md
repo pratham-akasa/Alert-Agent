@@ -91,36 +91,6 @@ A properly formatted investigation summary that:
 - Provides specific, actionable technical solutions
 - Includes validation results when available
 
-## Examples
-
-### Example 1: Complete investigation summary
-After completing all investigation steps with actual errors found:
-```
----
-## 🔍 INVESTIGATION SUMMARY
-
-### 1. WHERE IT HAPPENED
-- Primary Service: qp-booking-webservice
-- Primary Log Group: /copilot/qp-prod-qp-booking-webservice
-- Affected Dependencies: NavOds-Webservice (15 errors)
-
-### 2. WHAT HAPPENED
-- Error Type: UnrecognizedPropertyException
-- Error Message: Unrecognized field "newField" not marked as ignorable
-- Error Count: 23 occurrences
-- Sample Error: com.fasterxml.jackson.databind.exc.UnrecognizedPropertyException: Unrecognized field "newField"
-
-### 3. WHY IT HAPPENED (Root Cause)
-- Root Cause: Schema mismatch between services - upstream service added new field
-- Contributing Factors: Missing @JsonIgnoreProperties annotation
-
-### 4. POSSIBLE SOLUTIONS
-1. Add @JsonIgnoreProperties(ignoreUnknown = true) to affected model classes
-2. Update model classes to include the new field with proper mapping
-3. Coordinate with upstream service team to ensure backward compatibility
----
-```
-
 ## Quality checklist
 Before submitting your summary, verify:
 - [ ] Used exact format with 🔍 emoji and 4 numbered sections
