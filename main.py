@@ -59,8 +59,8 @@ SAMPLE_BODY = """You are receiving this email because your Amazon CloudWatch Ala
 - Name: qp-booking-service-common-error
 - Description: Common error alarm for booking service
 - State Change: OK -> ALARM
-- Reason for State Change: Threshold Crossed: 1 datapoint [5.0 (20/02/26 04:08:00)] was greater than or equal to the threshold (1.0).
-- Timestamp: Thursday 12 March, 2026 04:08:18 UTC
+- Reason for State Change: Threshold Crossed: 1 datapoint [5.0 (14/03/26 14:08:00)] was greater than or equal to the threshold (1.0).
+- Timestamp: Saturday 14 March, 2026 14:08:18 UTC
 - AWS Account: 471112573018
 - Alarm Arn: arn:aws:cloudwatch:ap-south-1:471112573018:alarm:qp-booking-service-common-error
 - MetricName: ErrorCount
