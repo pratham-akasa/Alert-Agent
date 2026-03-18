@@ -1,7 +1,7 @@
 """
 Agent — The core brain of the framework.
 
-Uses LangChain's ReAct agent with ChatOllama to reason about events,
+Uses LangChain's ReAct agent with ChatBedrock to reason about events,
 select and execute tools, and persist results to memory.
 """
 
@@ -12,7 +12,7 @@ import time
 from typing import Optional
 
 from langchain_core.tools import tool
-from langchain_ollama import ChatOllama
+from langchain_aws import ChatBedrock
 from langgraph.prebuilt import create_react_agent
 
 from framework.core.config import Config
@@ -206,14 +206,14 @@ def store_correction(alarm_name: str, correction: str) -> str:
 
 class Agent:
     """
-    LangChain ReAct agent powered by Ollama.
+    LangChain ReAct agent powered by Amazon Bedrock.
 
     Workflow:
-      1. Receive an Event
-      2. Build prompt with event payload + memory context + corrections
-      3. Run the ReAct loop (think → tool call → observe → repeat)
-      4. Store the result in memory
-      5. Notify the team via MS Teams
+        1. Receive an Event
+        2. Build prompt with event payload + memory context + corrections
+        3. Run the ReAct loop (think → tool call → observe → repeat)
+        4. Store the result in memory
+        5. Notify the team via MS Teams
     """
 
     def __init__(self, config: Config, tools: list, memory: Memory):
@@ -237,11 +237,10 @@ class Agent:
         self.verbose = agent_cfg.get("verbose", True)
 
         # ── LLM setup ─────────────────────────────────────────────
-        self.llm = ChatOllama(
-            base_url=config.ollama_base_url,
-            model=config.ollama_model,
-            temperature=0.2,
-            timeout=300.0,  # 5 minutes timeout for slow local generation
+        self.llm = ChatBedrock(
+            model_id=config.bedrock_model_id,
+            region_name=config.bedrock_region,
+            model_kwargs={"temperature": 0.2, "max_tokens": 4096},
         )
 
         # ── Load skill descriptions ─────────────────────────────────
@@ -274,8 +273,9 @@ class Agent:
         )
 
         logger.info(
-            "Agent initialized — model=%s, tools=%s, max_iter=%d",
-            config.ollama_model,
+            "Agent initialized — model=%s (region=%s), tools=%s, max_iter=%d",
+            config.bedrock_model_id,
+            config.bedrock_region,
             [t.name for t in self.tools],
             self.max_iterations,
         )

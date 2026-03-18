@@ -113,12 +113,12 @@ class Config:
     # ── Convenience properties ─────────────────────────────────────────
 
     @property
-    def ollama_base_url(self) -> str:
-        return self.get("ollama.base_url", "http://localhost:11434")
+    def bedrock_model_id(self) -> str:
+        return self.get("bedrock.model_id", "anthropic.claude-3-haiku-20240307-v1:0")
 
     @property
-    def ollama_model(self) -> str:
-        return self.get("ollama.model", "qwen2.5:7b")
+    def bedrock_region(self) -> str:
+        return self.get("bedrock.region", self.get("aws.region", "ap-south-1"))
 
     @property
     def email_config(self) -> dict:
