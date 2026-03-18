@@ -26,7 +26,6 @@ from framework.tools.log_group_discovery import search_log_groups, discover_log_
 from framework.tools.dependency_checker import check_service_dependencies
 # from framework.tools.comprehensive_validator import validate_investigation_logs  # Removed for now
 # from framework.tools.teams_notifier import notify_teams  # TODO: Enable when Teams webhook is configured
-from bedrock_agentcore import BedrockAgentCoreApp
 
 
 # ── Logging ────────────────────────────────────────────────────────────

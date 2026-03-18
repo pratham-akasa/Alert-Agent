@@ -121,6 +121,18 @@ class Config:
         return self.get("bedrock.region", self.get("aws.region", "ap-south-1"))
 
     @property
+    def bedrock_access_key_id(self) -> str:
+        return self.get("bedrock.access_key_id", "")
+
+    @property
+    def bedrock_secret_access_key(self) -> str:
+        return self.get("bedrock.secret_access_key", "")
+
+    @property
+    def bedrock_session_token(self) -> str:
+        return self.get("bedrock.session_token", "")
+
+    @property
     def email_config(self) -> dict:
         return self._data.get("email", {})
 

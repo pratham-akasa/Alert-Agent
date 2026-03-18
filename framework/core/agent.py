@@ -237,11 +237,22 @@ class Agent:
         self.verbose = agent_cfg.get("verbose", True)
 
         # ── LLM setup ─────────────────────────────────────────────
-        self.llm = ChatBedrock(
-            model_id=config.bedrock_model_id,
-            region_name=config.bedrock_region,
-            model_kwargs={"temperature": 0.2, "max_tokens": 4096},
-        )
+        bedrock_kwargs = {
+            "model_id": config.bedrock_model_id,
+            "region_name": config.bedrock_region,
+            "model_kwargs": {"temperature": 0.2, "max_tokens": 4096},
+        }
+        # Use dedicated Bedrock credentials if provided (separate from AWS/CloudWatch creds)
+        if config.bedrock_access_key_id and config.bedrock_secret_access_key:
+            import boto3
+            bedrock_session = boto3.Session(
+                aws_access_key_id=config.bedrock_access_key_id,
+                aws_secret_access_key=config.bedrock_secret_access_key,
+                aws_session_token=config.bedrock_session_token or None,
+                region_name=config.bedrock_region,
+            )
+            bedrock_kwargs["client"] = bedrock_session.client("bedrock-runtime")
+        self.llm = ChatBedrock(**bedrock_kwargs)
 
         # ── Load skill descriptions ─────────────────────────────────
         self.skills_context = self._load_skills()
