@@ -21,11 +21,9 @@ from framework.core.agent import Agent
 from framework.events.base import Event
 from framework.tools.email_parser import parse_aws_alert_email
 from framework.tools.cloudwatch_fetcher import fetch_cloudwatch_logs
-# from framework.tools.service_registry import fetch_service_info  # TODO: Enable when services.yaml is needed
+from framework.tools.graph_email_tools import list_graph_emails, read_graph_email
 from framework.tools.log_group_discovery import search_log_groups, discover_log_group
 from framework.tools.dependency_checker import check_service_dependencies
-# from framework.tools.comprehensive_validator import validate_investigation_logs  # Removed for now
-# from framework.tools.teams_notifier import notify_teams  # TODO: Enable when Teams webhook is configured
 
 
 # ── Logging ────────────────────────────────────────────────────────────
@@ -45,9 +43,8 @@ ALL_TOOLS = [
     discover_log_group,
     search_log_groups,
     check_service_dependencies,
-    # validate_investigation_logs,  # Removed for now - causing issues
-    # fetch_service_info,  # TODO: Enable when services.yaml is needed
-    # notify_teams,  # TODO: Enable when Teams webhook is configured
+    list_graph_emails,
+    read_graph_email,
 ]
 
 
@@ -60,8 +57,8 @@ SAMPLE_BODY = """You are receiving this email because your Amazon CloudWatch Ala
 - Name: qp-booking-service-common-error
 - Description: Common error alarm for booking service
 - State Change: OK -> ALARM
-- Reason for State Change: Threshold Crossed: 1 datapoint [5.0 (14/03/26 14:08:00)] was greater than or equal to the threshold (1.0).
-- Timestamp: Saturday 14 March, 2026 14:08:18 UTC
+- Reason for State Change: Threshold Crossed: 1 datapoint [5.0 (17/03/26 14:08:00)] was greater than or equal to the threshold (1.0).
+- Timestamp: Tuesday 17 March, 2026 14:08:18 UTC
 - AWS Account: 471112573018
 - Alarm Arn: arn:aws:cloudwatch:ap-south-1:471112573018:alarm:qp-booking-service-common-error
 - MetricName: ErrorCount
@@ -133,14 +130,14 @@ async def run_daemon(config: Config) -> None:
 
     # ── Email event source ─────────────────────────────────────────
     email_cfg = config.email_config
-    if email_cfg.get("username"):
-        from framework.events.email_event import EmailEventSource
-        email_source = EmailEventSource(email_cfg)
+    if email_cfg.get("userId"):  # Changed from "username" to "userId" for Graph API
+        from framework.events.graph_email_event import GraphEmailEventSource
+        email_source = GraphEmailEventSource(email_cfg)
         email_source.on_event(lambda evt: agent.process_event(evt))
         event_sources.append(email_source)
-        logger.info("Email event source enabled")
+        logger.info("Graph API email event source enabled")
     else:
-        logger.warning("Email event source skipped — no username configured")
+        logger.warning("Email event source skipped — no userId configured")
 
     if not event_sources:
         logger.error("No event sources configured! Set up email credentials in config.yaml.")

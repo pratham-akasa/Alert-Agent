@@ -572,7 +572,7 @@ class Agent:
                     skill_file = os.path.join(skill_path, "SKILL.md")
                     if os.path.exists(skill_file):
                         try:
-                            with open(skill_file, "r") as f:
+                            with open(skill_file, "r", encoding="utf-8", errors="replace") as f:
                                 content = f.read()
                             sections.append(f"### Skill: {skill_folder}\n{content}")
                             logger.info("Loaded skill: %s", skill_folder)
