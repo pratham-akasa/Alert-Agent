@@ -345,32 +345,48 @@ class Agent:
             required_tools = {'parse_aws_alert_email', 'discover_log_group', 'fetch_cloudwatch_logs', 'check_service_dependencies', 'notify_teams'}
             missing_tools = required_tools - tools_used
             
-            if missing_tools and event.source == "email":
+            is_email_event = event.source in ("email", "graph_email")
+            
+            if missing_tools and is_email_event:
                 logger.warning("Agent did not use required tools: %s", missing_tools)
-                # Add context summary to help agent
                 context_summary = self.context_manager.get_summary()
                 
-                # Be more specific about what's missing
-                missing_steps = []
-                if 'parse_aws_alert_email' in missing_tools:
-                    missing_steps.append("1. parse_aws_alert_email - Extract alarm details from the email body in the payload above")
-                if 'discover_log_group' in missing_tools:
-                    missing_steps.append("2. discover_log_group - Find the correct log group for the alarm")
-                if 'fetch_cloudwatch_logs' in missing_tools:
-                    missing_steps.append("3. fetch_cloudwatch_logs - Fetch logs from the discovered log group WITH alarm_timestamp")
-                if 'check_service_dependencies' in missing_tools:
-                    missing_steps.append("4. check_service_dependencies - Check all service dependencies WITH alarm_timestamp")
-                if 'notify_teams' in missing_tools:
-                    missing_steps.append("5. notify_teams - Send the investigation summary to Teams")
+                # Special case: only notify_teams is missing and summary is already in the response
+                # Extract the summary from the last AI message and call notify_teams directly
+                if missing_tools == {'notify_teams'}:
+                    current_response = result["messages"][-1].content
+                    alarm_name = self.context_manager.get_locked_value('alarm_name') or 'Unknown Alarm'
+                    log_group = self.context_manager.get_locked_value('log_group_name') or ''
+                    follow_up = (
+                        f"You completed the investigation but forgot to call notify_teams.\n\n"
+                        f"Call notify_teams NOW with:\n"
+                        f"- summary: the full investigation summary you just wrote\n"
+                        f"- alarm_name: \"{alarm_name}\"\n"
+                        f"- log_group: \"{log_group}\"\n\n"
+                        f"Do NOT rewrite the summary. Just call notify_teams with the summary above."
+                    )
+                else:
+                    missing_steps = []
+                    if 'parse_aws_alert_email' in missing_tools:
+                        missing_steps.append("1. parse_aws_alert_email - Extract alarm details from the email body in the payload above")
+                    if 'discover_log_group' in missing_tools:
+                        missing_steps.append("2. discover_log_group - Find the correct log group for the alarm")
+                    if 'fetch_cloudwatch_logs' in missing_tools:
+                        missing_steps.append("3. fetch_cloudwatch_logs - Fetch logs from the discovered log group WITH alarm_timestamp")
+                    if 'check_service_dependencies' in missing_tools:
+                        missing_steps.append("4. check_service_dependencies - Check all service dependencies WITH alarm_timestamp")
+                    if 'notify_teams' in missing_tools:
+                        missing_steps.append("5. notify_teams - Send the investigation summary to Teams")
+                    
+                    follow_up = (
+                        f"INVESTIGATION INCOMPLETE. You MUST complete these missing steps:\n\n"
+                        f"{chr(10).join(missing_steps)}\n\n"
+                        f"CRITICAL: Use the EXACT email body from the payload above, not placeholder text.\n"
+                        f"CRITICAL: After completing ALL steps, provide the structured investigation summary.\n\n"
+                        f"Current context: {context_summary}\n\n"
+                        f"Continue the investigation now - do NOT provide a generic response."
+                    )
                 
-                follow_up = (
-                    f"INVESTIGATION INCOMPLETE. You MUST complete these missing steps:\n\n"
-                    f"{chr(10).join(missing_steps)}\n\n"
-                    f"CRITICAL: Use the EXACT email body from the payload above, not placeholder text.\n"
-                    f"CRITICAL: After completing ALL steps, provide the structured investigation summary.\n\n"
-                    f"Current context: {context_summary}\n\n"
-                    f"Continue the investigation now - do NOT provide a generic response."
-                )
                 result = self.agent.invoke(
                     {"messages": messages + [("user", follow_up)]},
                     config={"recursion_limit": self.max_iterations},
@@ -379,7 +395,7 @@ class Agent:
                 self._update_context_from_messages(result["messages"])
             
             # Check if alarm_timestamp was missing (even if tools were called)
-            elif not alarm_timestamp_used and event.source == "email" and 'fetch_cloudwatch_logs' in tools_used:
+            elif not alarm_timestamp_used and is_email_event and 'fetch_cloudwatch_logs' in tools_used:
                 logger.error("❌ CRITICAL: Tools were called but alarm_timestamp was NOT passed!")
                 follow_up = (
                     "❌ CRITICAL ERROR DETECTED:\n\n"
@@ -403,7 +419,7 @@ class Agent:
             final_message = result["messages"][-1].content
             
             # Check if the response contains the required investigation summary format
-            if event.source == "email" and "🔍 INVESTIGATION SUMMARY" not in final_message:
+            if is_email_event and "🔍 INVESTIGATION SUMMARY" not in final_message:
                 logger.warning("Final response missing required investigation summary format")
                 summary_reminder = (
                     "Your response is missing the required investigation summary format. "
