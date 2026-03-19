@@ -86,6 +86,11 @@ WORKFLOW (execute in order):
    3. [Third technical solution if applicable]
    ---
    ```
+6. notify_teams(summary=<investigation_summary>, alarm_name=<alarm_name>, log_group=<best_log_group>) - **MANDATORY FINAL STEP**
+   CRITICAL: Call this AFTER generating the investigation summary
+   CRITICAL: Pass the FULL investigation summary text as the summary parameter
+   CRITICAL: Use the alarm_name from step 1 and log_group from step 2
+   NOTE: Do NOT pass severity — it is auto-inferred from the summary content
    - **EXTRACT real data** from your tool outputs (steps 1-4)
    - **CRITICAL: Check event_count in fetch_cloudwatch_logs output**
    - **If event_count = 0 and events = [], you MUST report "No errors found" - DO NOT make up fake errors**
@@ -99,8 +104,9 @@ RULES:
 - ALWAYS pass the "timestamp" from parse_aws_alert_email as "alarm_timestamp" to fetch_cloudwatch_logs
 - ALWAYS use the exact alarm_name from the email - do NOT change it
 - ALWAYS call check_service_dependencies in step 4 with the alarm_timestamp - it automatically handles all dependencies
+- ALWAYS call notify_teams in step 6 with the full investigation summary (do NOT pass severity — it is auto-inferred)
 - The dependency checker is fully automated - it discovers log groups and fetches logs for ALL dependencies
-- **MANDATORY**: You MUST complete ALL 4 steps before providing any final response
+- **MANDATORY**: You MUST complete ALL 6 steps before providing any final response
 - **MANDATORY**: Your final response MUST use the exact investigation summary format from step 5
 - Do NOT provide generic responses like "please provide the actual email body"
 - Do NOT stop early with partial results
@@ -336,7 +342,7 @@ class Agent:
                             logger.error("❌ CRITICAL: %s called WITHOUT alarm_timestamp parameter!", tool_name)
             
             # Required tools for alarm investigation
-            required_tools = {'parse_aws_alert_email', 'discover_log_group', 'fetch_cloudwatch_logs', 'check_service_dependencies'}
+            required_tools = {'parse_aws_alert_email', 'discover_log_group', 'fetch_cloudwatch_logs', 'check_service_dependencies', 'notify_teams'}
             missing_tools = required_tools - tools_used
             
             if missing_tools and event.source == "email":
@@ -354,6 +360,8 @@ class Agent:
                     missing_steps.append("3. fetch_cloudwatch_logs - Fetch logs from the discovered log group WITH alarm_timestamp")
                 if 'check_service_dependencies' in missing_tools:
                     missing_steps.append("4. check_service_dependencies - Check all service dependencies WITH alarm_timestamp")
+                if 'notify_teams' in missing_tools:
+                    missing_steps.append("5. notify_teams - Send the investigation summary to Teams")
                 
                 follow_up = (
                     f"INVESTIGATION INCOMPLETE. You MUST complete these missing steps:\n\n"

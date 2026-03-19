@@ -17,12 +17,9 @@ logger = logging.getLogger(__name__)
 
 def _get_webhook_url() -> str:
     """Get the Teams webhook URL from config or environment."""
-    # Environment variable takes priority
     url = os.environ.get("TEAMS_WEBHOOK_URL", "")
     if url:
         return url
-
-    # Fall back to config.yaml
     try:
         from framework.core.config import Config
         config = Config()
@@ -31,10 +28,35 @@ def _get_webhook_url() -> str:
         return ""
 
 
+def _infer_severity(summary: str, alarm_name: str) -> str:
+    """
+    Infer severity from the investigation summary and alarm name.
+
+    Rules (in priority order):
+    - 'Critical' if summary mentions outage / service down / 500 errors / fatal
+    - 'Low'      if alarm resolved / OK state / no errors found
+    - 'Medium'   if threshold crossed but no log evidence of errors
+    - 'High'     default — alarm fired with errors present
+    """
+    text = (summary + " " + alarm_name).lower()
+
+    critical_keywords = ["outage", "down", "unavailable", "data loss", "500", "critical", "fatal", "crash"]
+    low_keywords = ["ok", "resolved", "no errors found", "no error"]
+    medium_keywords = ["no errors", "event_count: 0", 'event_count":0', "threshold crossed"]
+
+    if any(k in text for k in critical_keywords):
+        return "Critical"
+    if any(k in text for k in low_keywords):
+        return "Low"
+    if any(k in text for k in medium_keywords):
+        return "Medium"
+    return "High"
+
+
 def _build_adaptive_card(
     alarm_name: str,
     summary: str,
-    severity: str = "High",
+    severity: str,
     owner_team: str = "",
     log_group: str = "",
 ) -> dict:
@@ -89,19 +111,10 @@ def _build_adaptive_card(
             "wrap": True,
         })
 
-    card_body.append({
-        "type": "TextBlock",
-        "text": "---",
-    })
+    card_body.append({"type": "TextBlock", "text": "---"})
+    card_body.append({"type": "TextBlock", "text": summary, "wrap": True})
 
-    card_body.append({
-        "type": "TextBlock",
-        "text": summary,
-        "wrap": True,
-    })
-
-    # Adaptive Card payload wrapped in the Teams webhook format
-    payload = {
+    return {
         "type": "message",
         "attachments": [
             {
@@ -115,14 +128,12 @@ def _build_adaptive_card(
             }
         ],
     }
-    return payload
 
 
 @tool
 def notify_teams(
     summary: str,
     alarm_name: str = "Unknown Alarm",
-    severity: str = "High",
     owner_team: str = "",
     log_group: str = "",
 ) -> str:
@@ -135,13 +146,16 @@ def notify_teams(
     Args:
         summary: The full investigation summary to post.
         alarm_name: Name of the alarm that triggered (e.g. 'qp-booking-service-common-error').
-        severity: Severity level — one of 'Critical', 'High', 'Medium', 'Low', 'Info'.
         owner_team: The team responsible for this service (from service registry).
         log_group: The CloudWatch log group that was investigated.
 
     Returns:
         A JSON string confirming delivery or explaining the error.
     """
+    # Auto-infer severity from the summary content — don't rely on LLM to pass it correctly
+    severity = _infer_severity(summary, alarm_name)
+    logger.info("Auto-inferred severity for '%s': %s", alarm_name, severity)
+
     webhook_url = _get_webhook_url()
 
     if not webhook_url:
@@ -172,9 +186,10 @@ def notify_teams(
             result = {
                 "status": "sent",
                 "alarm_name": alarm_name,
+                "severity": severity,
                 "message": "Investigation summary posted to Teams successfully.",
             }
-            logger.info("Teams notification sent for alarm: %s", alarm_name)
+            logger.info("Teams notification sent for alarm: %s (severity=%s)", alarm_name, severity)
         else:
             result = {
                 "status": "error",

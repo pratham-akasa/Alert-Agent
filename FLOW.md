@@ -1,328 +1,219 @@
-# AWS Alert Bot Project Flow
+# AWS Alert Bot — Project Flow
 
-This document explains the full flow of the `Alert-Agent` project: architecture, runtime behavior, features, tools, skills, and test coverage.
+## 1. Purpose
 
-## 1. Project Purpose
+Autonomous AWS CloudWatch alarm investigation agent.
 
-`Alert-Agent` is an autonomous AWS CloudWatch alarm investigation agent.  
-It ingests alarm notifications (primarily from email), runs investigation tools, and produces a structured summary for operators.
-
-Core goals:
-- Parse incoming AWS alarm emails
-- Identify the impacted service and log groups
-- Fetch relevant CloudWatch logs around alarm time
-- Check dependency services for correlated failures
-- Produce actionable investigation summaries
-- Persist history and corrections for future runs
+Reads alarm emails from a Microsoft 365 mailbox via Graph API, runs investigation tools against AWS, produces a structured summary, and posts it to a Microsoft Teams channel.
 
 ---
 
-## 2. High-Level Architecture
+## 2. Runtime Modes (`main.py`)
 
-Main components:
-1. **Entrypoint + Runtime Orchestration**: `main.py`
-2. **Core Agent System**: `framework/core/agent.py`
-3. **Event Sources**: `framework/events/*`
-4. **Tooling Layer**: `framework/tools/*`
-5. **Context + Memory + Logging**: `framework/core/context_manager.py`, `memory.py`, `conversation_logger.py`
-6. **Skill Documents**: `framework/skills/*/SKILL.md`
-7. **Configuration**: `config.yaml`, optional `services.yaml`
-
-Request flow (simplified):
-1. Email (IMAP polling) creates an `Event`
-2. Agent receives event and runs ReAct loop
-3. Agent calls tools in sequence (parse -> discover -> fetch -> dependencies)
-4. Context manager locks key values and corrects drift
-5. Final structured investigation summary is generated
-6. Run details are saved to `logs/` and memory is updated
+| Mode | Command | Description |
+|------|---------|-------------|
+| Daemon | `python main.py` | Polls mailbox every 60s, processes alarms continuously |
+| Test | `python main.py --test` | Runs a built-in sample alarm through the full pipeline |
+| Interactive | `python main.py --interactive` | Free-text chat with the agent for manual investigations |
+| Backfill | `python backfill_graph_emails.py` | Process historical emails from last N days |
 
 ---
 
-## 3. Runtime Modes (`main.py`)
+## 3. Email Ingestion (Graph API)
 
-`main.py` supports three modes:
+**File**: `framework/events/graph_email_event.py`  
+**Client**: `framework/core/graph_email_client.py`
 
-1. **Daemon mode** (default):  
-   Starts configured event sources (currently email source if credentials are present) and processes incoming alerts continuously.
+Flow:
+1. `GraphEmailEventSource.start()` runs an async polling loop
+2. Every `poll_interval` seconds, calls `GraphEmailClient.list_messages()`
+3. Filters unread emails with `subject_filter` ("ALARM") client-side
+4. For each new message, calls `GraphEmailClient.read_message(message_id)`
+5. Strips HTML from body via `extract_body_text()` → plain text
+6. Emits `Event(source="graph_email", event_type="aws_alarm", payload={...})`
+7. Marks email as read via `GraphEmailClient.mark_as_read()`
 
-2. **Test mode** (`python main.py --test`):  
-   Sends a built-in sample AWS alarm event through the full agent pipeline.
-
-3. **Interactive mode** (`python main.py --interactive`):  
-   Lets you send free-text prompts to the same agent loop for debugging/manual investigations.
-
-Startup steps:
-1. Load `Config` from `config.yaml`
-2. Build `Memory`
-3. Register enabled tools (`ALL_TOOLS`)
-4. Construct `Agent(config, tools, memory)`
-5. Run selected mode
+Authentication: OAuth2 client credentials flow  
+Token endpoint: `https://login.microsoftonline.com/{tenantId}/oauth2/v2.0/token`
 
 ---
 
-## 4. Event System (`framework/events`)
+## 4. Agent Processing (`framework/core/agent.py`)
 
-### 4.1 `Event` (`framework/events/base.py`)
-- Standard object with:
-  - `source` (e.g., `email`)
-  - `event_type` (e.g., `aws_alarm`)
-  - `payload` (subject/from/body)
-  - `timestamp`
+### 4.1 Initialization
+- Loads `config.yaml` via `Config`
+- Loads `memory.json` via `Memory`
+- Loads all `framework/skills/*/SKILL.md` files into system prompt
+- Wraps all tools with context-correction layer
+- Creates LangGraph ReAct agent with `ChatBedrock` (Amazon Bedrock)
 
-### 4.2 `EventSource` base class
-- Abstract async event producer.
-- Any source must implement `start()` and emit events via callback.
+### 4.2 Event Processing (`process_event`)
+1. Clear `ContextManager` state for new event
+2. Format event as user message (JSON payload)
+3. Invoke ReAct agent loop (max 10 iterations)
+4. Check which required tools were used — if any missing, send follow-up
+5. Check if `alarm_timestamp` was passed to log tools — if not, force retry
+6. Check if final response contains investigation summary — if not, force summary
+7. Save full run to `logs/<timestamp>_aws_alarm.md`
+8. Append event summary to `memory.json`
 
-### 4.3 `EmailEventSource` (`framework/events/email_event.py`)
-Features:
-- Polls IMAP on interval
-- Filters by unread + subject pattern (default `ALARM`)
-- Decodes headers and extracts text body
-- Emits standardized `Event`
-- Marks processed emails as seen
+### 4.3 Mandatory Investigation Sequence (prompt-enforced)
+```
+1. parse_aws_alert_email       → extract alarm_name, timestamp, region
+2. discover_log_group          → find best CloudWatch log group
+3. fetch_cloudwatch_logs       → fetch ERROR logs around alarm timestamp
+4. check_service_dependencies  → fetch logs for all dependent services
+5. Generate investigation summary (mandatory format)
+6.  auto-inferred)
+```
 
----
 
-## 5. Core Agent Flow (`framework/core/agent.py`)
 
-### 5.1 Agent Initialization
-- Creates local Ollama chat model (`ChatOllama`)
-- Loads all skill docs from `framework/skills/*/SKILL.md`
-- Injects memory context and correction history into system prompt
-- Wraps tools with context-aware guardrails
-- Creates LangGraph ReAct agent (`create_react_agent`)
+ + Context Manager
 
-### 5.2 Event Processing (`process_event`)
-Main path:
-1. Clear previous context for new event
-2. Format event payload as user message
-3. Invoke ReAct agent with recursion/iteration limit
-4. Track which tools were used
-5. If required investigation tools were skipped, force continuation with follow-up instruction
-6. If final output misses required summary format, force a summary-only follow-up
-7. Save full run to markdown log (`logs/*.md`)
-8. Save event summary metadata to memory (`memory.json`)
+re/context_manager.py`
 
-### 5.3 Mandatory Investigation Logic (Prompt-enforced)
-Expected sequence:
-1. `parse_aws_alert_email`
-2. `discover_log_group`
-3. `fetch_cloudwatch_logs`
-4. `check_service_dependencies`
-5. Generate final structured investigation summary
+Eve intercepted:
+```
+Agent calls tool(pams)
+    → Tool Wrapper
+        → context_manager.validate_and_co
+        → original_tool(corrected_params)
+        → context_manager.updal, result)
+   agent
+```
 
-### 5.4 Correction Learning Tool
-- `store_correction(alarm_name, correction)`
-- Saves user/operator corrections into persistent memory for future investigations
+Values locked after each step:
+- `alarm_name` — locked after `parse_aws_alert_email`
+- `alarm_timestamp` — locked after `parse_aws_alert_email`
+- `log_group_name` — locked after `discover_log_group`
+- `primary_logs_response` — locked after `fetch_cloudwatch_logs`
+_service_dependencies`
 
----
-
-## 6. Context Guardrails (`framework/core/context_manager.py`)
-
-Purpose: prevent value drift/hallucinated parameter changes across tool calls.
-
-Key functionality:
-- Locks key extracted values:
-  - `alarm_name`
-  - `alarm_timestamp`
-  - `log_group_name`
-- Stores raw output strings for downstream validation tools
-- Validates and auto-corrects tool params:
-  - wrong `alarm_name`
-  - wrong log group value
-  - wrong param name (`log_group` -> `log_group_name`)
-  - invalid timestamp format for time-sensitive tools
-- Can auto-inject missing validation payloads for comprehensive validator
+Auto-corrections applied:
+- Wrong param name (`log_group` → `log_group_n
+- Missing `alarm_timestamp` on log fetch calls
+ted `alarm_name` values
 
 ---
 
-## 7. Tooling Layer (`framework/tools`)
+. Tools
 
-## 7.1 `parse_aws_alert_email` (`email_parser.py`)
-Features:
-- Parses JSON-style SNS payloads when present
-- Falls back to regex extraction for text-format emails
-- Extracts alarm details: alarm name, state, reason, region, account, timestamp, metric, etc.
-- Performs validation checks for timestamp and region format
-- Returns structured JSON string
+ered in `main.py`)
 
-## 7.2 `discover_log_group` + `search_log_groups` (`log_group_discovery.py`)
-Features:
-- Uses AWS Resource Explorer (`resource-explorer-2`)
-- Derives prioritized search queries from alarm name
-- Filters to `/copilot/` log groups
-- Ranks production log groups first (`prod` preference)
-- Returns best match + candidates + search trace
+| Tool | File | Purpose |
+|------|------|---------|
+| `parse_aws_alert_email` | `email_parser.py` | Extract alarm details from email body (plain text or HTML-stripped) |
+| `discover_log_group` | `log_group_discovery.py` | Find best CloudWatch loglorer |
+| `search_log_groups` | `log_group_discovery.py` | Manual log group search |
+| `fetch_cloudwatch_logs` | `cloudwatch_fetcher.py` | Fetch logs from CloudWatch around alarm timeamp |
+| `check_service_dependencies` | `dependency_checker.py` | Fetch logs for all dependent services |
+| `list_graph_emails` | `graph_email_tools.py` | List unread alarm emails via Graph API |
+| `read_graph_email` | `graph_email_tools.py` | Read full email content by e ID |
+ Adaptive Card |
+| `store_correction` | `agent.pymory |
 
-## 7.3 `fetch_cloudwatch_logs` (`cloudwatch_fetcher.py`)
-Features:
-- Uses CloudWatch Logs `filter_log_events`
-- Supports filter pattern, window size, max events
-- Uses `alarm_timestamp` if provided (critical for correct investigation window)
-- Returns fetched events + validation metadata + AWS console deep link
+### Available but not registered
 
-## 7.4 `check_service_dependencies` (`dependency_checker.py`)
-Features:
-- Extracts primary service from alarm name
-- Reads dependency knowledge base from:
-  `framework/skills/service-registry/references/service_dependencies_kb.md`
-- Finds dependency log groups via smart query search
-- Fetches ERROR logs for each dependency in same incident window
-- Produces per-dependency results + aggregate summary
-
-## 7.5 `fetch_service_info` (`service_registry.py`) (optional in main tool list)
-Features:
-- Loads `services.yaml`
-- Maps alarms to service metadata (owner team, log groups, dependencies, runbook, etc.)
-- Supports lookup by alarm or service name
-- Caches registry data for repeated calls
-
-## 7.6 `notify_teams` (`teams_notifier.py`) (currently disabled in `main.py`)
-Features:
-- Builds Adaptive Card payload
-- Sends summary to Microsoft Teams webhook
-- Severity-aware styling and contextual metadata
-
-## 7.7 `validate_investigation_logs` (`comprehensive_validator.py`) (currently disabled in `main.py`)
-Features:
-- Validates primary + dependency log fetch windows
-- Checks alarm timestamp alignment across services
-- Flags critical timing/consistency issues
-- Produces pass/fail report and critical issue summary
+| Tool | File | Notes |
+|------|------|-------|
+| `fetch_service_info` | `service_registry.py` | Needs `services.yaml` populated |
+ation step |
 
 ---
 
-## 8. Skills (`framework/skills/*/SKILL.md`)
+fication
 
-The agent dynamically loads all skill files and injects them into its system context.
+_notifier.py`
 
-Current skill folders:
-1. `email-parser`
-2. `cloudwatch-fetcher`
-3. `log-group-discovery`
-4. `dependency-checker`
-5. `service-registry`
-6. `teams-notifier`
-7. `investigation-summary`
-8. `comprehensive-validator`
+Called as the final mandatory step after the investigation summary is generated.
 
-What skills provide:
-- Operational constraints and best practices for each tool
-- Investigation formatting requirements
-- Domain-specific workflow guidance
+oes not choose it:
 
-Impact:
-- Skills serve as instruction overlays for the LLM and significantly shape tool usage and output quality.
+| Severity | Triggered by |
+|----------|-------------|
+| Critical | outage, down, unavailable, fatal, crash, 500 errors |
+| High | default — alarm fired with errors present |
+| Medium | threshold crossed but no log evidence of errors |
+ors found |
+
+y
+- Posts to the configureng Webhook
+y if no webhook URL is configured (logs a warning, does not crash)
 
 ---
 
-## 9. Memory, Logging, and Learning
+## 8. Email Parser Detail
 
-### 9.1 Persistent Memory (`framework/core/memory.py`)
-Stores:
-- `facts`: key-value persistent facts
-- `history`: recent processed events
-- `corrections`: alarm-specific learned corrections
+tools/email_parser.py`
 
-Backed by: `memory.json`
+Handles two email formats:
+1. **JSON SNS pils with embedded JSON
+2. **Plain text / HTML-stripped** — forwarails stripped to single-line text
 
-### 9.2 Conversation Logging (`framework/core/conversation_logger.py`)
-For each run, writes a markdown file in `logs/` containing:
-- Input event content
-- Tool call inputs/outputs
-- Final response
-- Duration
-- Hallucination warning heuristics (e.g., fabricated errors when event_count is 0)
+Key parsing approach for plain text:
+- Region: direct strin"ap-south-1"`)
+- Timestam UTC (won't over-capture)
+Name: value` patterns
+- Rseparator
+undary)
 
----
 
-## 10. Configuration and Environment
 
-### 10.1 `config.yaml`
-Primary config domains:
-- `ollama`: model and endpoint
-- `email`: IMAP settings and polling behavior
-- `aws`: credentials + region
-- `teams`: webhook settings
-- `agent`: iteration limits, memory file path, verbosity
 
-### 10.2 `framework/core/config.py`
-Capabilities:
-- Repo-root discovery (`get_repo_root`)
-- Typed dotted-key lookup
-- Central path helpers for `config.yaml` and `services.yaml`
 
-### 10.3 `services.yaml`
-- Optional static service registry file
-- Current repository version is mostly commented template content
+### `memory.json`
+Three sections:
+- `facts` — explicit key-value facts stored by agent
+- `history` — last 200 processed event summaries with timestamps
+- `corrections` — per-alarm corrections stored via ion` tool
 
-Security note:
-- Keep AWS credentials and webhook URLs out of version control and rotate exposed credentials immediately if leaked.
+t.
+
+### `logs/*.md`
+ntaining:
+- Iput event payload
+
+- Final agent response
+
 
 ---
 
-## 11. Testing and Evaluation
+## 10. Configuration
 
-### 11.1 Golden Cases (`tests/golden_evals.py`)
-- Canonical alarm inputs and expected parser/registry outputs
-- Intended for regression detection
+### `config.yaml` sections
 
-### 11.2 Eval Runner (`tests/run_evals.py`)
-Runs:
-1. Tool-level evaluations
-2. Optional agent-level evaluations (`--agent`, requires local Ollama)
+| Section | Used by |
+|---------|---------|
+| `bedrock` | Agent LLM (model, region, credentials) |
+| `email` | Graph API polling (tenantId, clientId, clientSecret, userId) |
+| `aws` | CloudWatch + Resource Explorer (credentials, region) |
+| `teams` | Teams notifier (webhook_url, enabled) |
+| `agent` | max_iterations, memory_file, verbose |
 
-Checks include:
-- Email parser correctness
-- Service registry lookup correctness
-- Memory correction behavior
-- Teams card payload shape
+### `services.yaml`
+Optabled.
+ as read
+```
+rd posted to Teams
+12. logs/2026-03-18_04-08-xx_aws_alarm.md written
+13. memory.json updated with event summary
+14. Email marked", Adaptive Carred as "Highfy_teams → severity auto-infed investigation summary
+11. notitc.
+10. Agent generates structurek_service_dependencies → checks data-transfer-service, dcs-service, eRROR events around 04:08 UTC
+9.  chec
+8.  fetch_cloudwatch_logs → 15 Epilot/qp-prod-qp-booking-webservice" → best_log_group="/co-south-1"
+7.  discover_log_group               region="apUTC",
+                 026 04:08:18 sday 18 March, 2estamp="Tue                           timg-service-common-error",
+   → alarm_name="qp-bookin6.  parse_aws_alert_emailts ReAct loop
+.process_event() starssageId
+5.  Agentm, body, ment with subject, froody
+4.  Emits Eveage, strips HTML → plain text beads full messread ALARM email
+3.  RventSource polls Graph API → finds unlbox
+2.  GraphEmailES sends email to mai`
+1.  CloudWatch alarm fires → SNnd-to-End Example
 
-### 11.3 Local Fix Validation Script (`test_fixes.py`)
-- Sanity checks for config path resolution, skill loading, imports, and validation helper behavior
-
+``
 ---
 
-## 12. Enabled vs Disabled Capabilities (Current State)
-
-Enabled in `main.py` tool registry:
-1. `parse_aws_alert_email`
-2. `fetch_cloudwatch_logs`
-3. `discover_log_group`
-4. `search_log_groups`
-5. `check_service_dependencies`
-
-Commented/disabled in current `main.py`:
-1. `validate_investigation_logs`
-2. `fetch_service_info`
-3. `notify_teams`
-
-This means runtime investigations currently focus on parse/discover/logs/dependencies and local summary generation, without built-in final validation step or outbound Teams notifications by default.
-
----
-
-## 13. End-to-End Sequence Example
-
-1. CloudWatch alarm email arrives in monitored inbox.
-2. `EmailEventSource` polls IMAP, finds unread `ALARM` email, emits `Event`.
-3. `Agent.process_event()` formats event payload and starts ReAct loop.
-4. Agent calls parser to extract alarm metadata.
-5. Agent discovers best service log group via Resource Explorer.
-6. Agent fetches primary service logs near alarm timestamp.
-7. Agent checks dependency services and fetches their logs.
-8. Context manager locks/corrects critical values during tool calls.
-9. Agent writes final structured investigation summary.
-10. Conversation logger writes run log in `logs/`.
-11. Memory records summarized event metadata in `memory.json`.
-
----
-
-## 14. Practical Extension Points
-
-1. Re-enable `validate_investigation_logs` for stronger reliability checks.
-2. Re-enable `fetch_service_info` with a populated `services.yaml`.
-3. Re-enable `notify_teams` once webhook is configured.
-4. Add new event sources (SNS/webhook/queue) by implementing `EventSource`.
-5. Expand dependency KB and golden evals from real incidents.
-6. Move secrets to environment variables or a secret manager.
-
+## 11. E

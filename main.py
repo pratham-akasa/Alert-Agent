@@ -24,6 +24,7 @@ from framework.tools.cloudwatch_fetcher import fetch_cloudwatch_logs
 from framework.tools.graph_email_tools import list_graph_emails, read_graph_email
 from framework.tools.log_group_discovery import search_log_groups, discover_log_group
 from framework.tools.dependency_checker import check_service_dependencies
+from framework.tools.teams_notifier import notify_teams
 
 
 # ── Logging ────────────────────────────────────────────────────────────
@@ -45,6 +46,7 @@ ALL_TOOLS = [
     check_service_dependencies,
     list_graph_emails,
     read_graph_email,
+    notify_teams,
 ]
 
 

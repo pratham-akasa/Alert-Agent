@@ -252,8 +252,9 @@ class ContextManager:
                 corrected['alarm_name'] = locked_alarm
                 corrections_made.append(f"alarm_name: {params['alarm_name']} → {locked_alarm}")
         
-        # Validate log_group_name
-        if 'log_group_name' in params or 'log_group' in params:
+        # Validate log_group_name — only for tools that use log_group_name, not notify_teams
+        tools_with_log_group_name = {'fetch_cloudwatch_logs', 'discover_log_group', 'search_log_groups'}
+        if tool_name in tools_with_log_group_name and ('log_group_name' in params or 'log_group' in params):
             locked_log_group = self.get_locked_value('log_group_name')
             
             # Fix parameter name if wrong

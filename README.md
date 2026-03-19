@@ -1,214 +1,194 @@
-# Alert Agent
+# AWS Alert Bot
 
 Autonomous Python agent for investigating AWS CloudWatch alarms from email alerts.
 
-It parses alarm emails, discovers relevant CloudWatch log groups, fetches logs around the alarm timestamp, checks known dependencies, and writes investigation runs to local markdown logs.
+Reads alarm emails via Microsoft Graph API, parses alarm details, discovers relevant CloudWatch log groups, fetches logs around the alarm timestamp, checks known dependencies, posts an investigation summary to Microsoft Teams, and writes full investigation runs to local markdown logs.
 
-## What This Repo Currently Does
+## What This Does
 
-- Runs a LangGraph ReAct agent backed by `ChatOllama`
+- Polls a Microsoft 365 mailbox using Microsoft Graph API (OAuth2 client credentials)
+- Runs a LangGraph ReAct agent backed by Amazon Bedrock (`amazon.nova-lite`)
+- Auto-infers alert severity from investigation content (Critical / High / Medium / Low)
+- Posts structured investigation summaries to a Microsoft Teams channel via Adaptive Cards
 - Supports 3 modes:
   - daemon email polling mode (`python main.py`)
   - smoke test mode (`python main.py --test`)
   - interactive prompt mode (`python main.py --interactive`)
 - Stores memory and corrections in `memory.json`
 - Writes per-run investigation logs into `logs/`
-- Uses AWS APIs for:
-  - CloudWatch Logs (`logs:FilterLogEvents`)
-  - Resource Explorer (`resource-explorer-2:Search`)
 
-## Active Tools (Registered in `main.py`)
+## Active Tools
 
-- `parse_aws_alert_email`
-- `fetch_cloudwatch_logs`
-- `discover_log_group`
-- `search_log_groups`
-- `check_service_dependencies`
-
-Also available in `framework/tools/` but currently not registered in `main.py`:
-- `fetch_service_info`
-- `notify_teams`
-- `validate_investigation_logs`
-
-## Architecture
-
-```text
-Email (IMAP) -> EventSource -> Agent (LangGraph + Ollama) -> Tools (AWS + parsing)
-                                              |
-                                              +-> Memory (memory.json)
-                                              +-> Run logs (logs/*.md)
-```
+| Tool | Purpose |
+|------|---------|
+| `parse_aws_alert_email` | Extracts alarm name, timestamp, region, metric from email body |
+| `discover_log_group` | Finds the best matching log group via AWS Resource Explorer |
+| `search_log_groups` | Manual log group search |
+| `fetch_cloudwatch_logs` | Fetches logs from CloudWatch around alarm timestamp |
+| `check_service_dependencies` | Fetches logs for all dependent services |
+| `list_graph_emails` | Lists unread alarm emails via Graph API |
+| `read_graph_email` | Reads full email content by message ID |
+| `notify_teams` | Posts investigation summary to Teams via Adaptive Card |
+| `store_correction` | Stores per-alarm corrections in memory for future runs |
 
 ## Project Structure
 
 ```text
 .
-├── main.py
-├── config.yaml
+├── main.py                          # Entry point
+├── backfill_graph_emails.py         # Backfill historical emails
+├── test_graph_api.py                # Test Graph API connection
+├── test_full_integration.py         # Full integration test
+├── config.yaml                      # Configuration
+├── services.yaml                    # Service registry (optional)
+├── memory.json                      # Persistent agent memory
 ├── requirements.txt
-├── Dockerfile
-├── docker-compose.yml
 ├── framework/
 │   ├── core/
-│   │   ├── agent.py
-│   │   ├── config.py
-│   │   ├── context_manager.py
-│   │   ├── conversation_logger.py
-│   │   └── memory.py
+│   │   ├── agent.py                 # LangGraph ReAct agent
+│   │   ├── config.py                # Config loader
+│   │   ├── context_manager.py       # Tool param correction/locking
+│   │   ├── conversation_logger.py   # Per-run markdown logs
+│   │   ├── graph_email_client.py    # Microsoft Graph API client
+│   │   └── memory.py                # Persistent memory (JSON)
 │   ├── events/
-│   │   ├── base.py
-│   │   └── email_event.py
+│   │   ├── base.py                  # Event + EventSource base classes
+│   │   └── graph_email_event.py     # Graph API email polling source
 │   ├── tools/
 │   │   ├── email_parser.py
-│   │   ├── log_group_discovery.py
 │   │   ├── cloudwatch_fetcher.py
+│   │   ├── log_group_discovery.py
 │   │   ├── dependency_checker.py
-│   │   ├── service_registry.py
-│   │   ├── teams_notifier.py
-│   │   └── comprehensive_validator.py
+│   │   ├── graph_email_tools.py     # LangChain @tool wrappers for Graph API
+│   │   ├── teams_notifier.py        # MS Teams Adaptive Card notifier
+│   │   ├── service_registry.py      # (available, not registered)
+│   │   └── comprehensive_validator.py # (available, not registered)
 │   └── skills/
 │       ├── investigation-summary/
-│       └── ...
+│       ├── cloudwatch-fetcher/
+│       ├── dependency-checker/
+│       ├── log-group-discovery/
+│       ├── email-parser/
+│       ├── service-registry/
+│       └── teams-notifier/
 ├── tests/
-│   ├── run_evals.py
-│   └── golden_evals.py
-└── services.yaml
+│   └── run_evals.py
+└── logs/                            # Per-run investigation markdown files
 ```
 
 ## Requirements
 
-- Python 3.9+
-- Ollama running locally or reachable over network
-- AWS credentials with required permissions
-- IMAP credentials (only for daemon email polling mode)
-
-Install dependencies:
+- Python 3.11+
+- AWS credentials with CloudWatch + Resource Explorer permissions
+- Microsoft 365 app registration with `Mail.Read` and `Mail.ReadWrite` permissions
+- Microsoft Teams Incoming Webhook URL
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Configuration
+## Configuration (`config.yaml`)
 
-Main config file: `config.yaml`
+```yaml
+bedrock:
+  model_id: "apac.amazon.nova-lite-v1:0"
+  region: "ap-south-1"
+  access_key_id: "..."
+  secret_access_key: "..."
+  session_token: "..."
 
-Sections used by the app:
-- `ollama.base_url`, `ollama.model`
-- `email.*` (daemon mode)
-- `aws.*`
-- `agent.max_iterations`, `agent.memory_file`, `agent.verbose`
-- `teams.*` (only used if Teams tool is enabled)
+email:
+  tenantId: "..."
+  clientId: "..."
+  clientSecret: "..."
+  userId: "mailbox@yourdomain.com"
+  poll_interval: 60       # seconds
+  subject_filter: "ALARM"
 
-### Important Security Note
+aws:
+  access_key_id: "..."
+  secret_access_key: "..."
+  session_token: "..."
+  region: ap-south-1
 
-Do not commit real secrets (AWS keys, session tokens, email passwords, webhook URLs) into `config.yaml`.
-Use environment variables or secret management in production.
+teams:
+  webhook_url: "https://your-org.webhook.office.com/..."
+  enabled: true
+
+agent:
+  max_iterations: 10
+  memory_file: "memory.json"
+  verbose: true
+```
+
+> Never commit real credentials. Rotate any exposed keys immediately.
 
 ## Usage
 
-Run daemon (email polling):
-
 ```bash
+# Production — polls mailbox every 60s
 python main.py
-```
 
-Run smoke test with sample alarm event:
-
-```bash
+# Smoke test with a built-in sample alarm
 python main.py --test
-```
 
-Run interactive mode:
-
-```bash
+# Interactive chat mode
 python main.py --interactive
+
+# Backfill historical emails (last 3 days)
+python backfill_graph_emails.py
+
+# Test Graph API connection
+python test_graph_api.py --list
+python test_graph_api.py --read <message_id>
+
+# Full integration test
+python test_full_integration.py
 ```
 
-Use custom config path:
+## Investigation Flow
 
-```bash
-python main.py --config /absolute/path/to/config.yaml
-```
+1. `parse_aws_alert_email` — extract alarm name, timestamp, region
+2. `discover_log_group` — find best CloudWatch log group
+3. `fetch_cloudwatch_logs` — fetch ERROR logs around alarm timestamp
+4. `check_service_dependencies` — fetch logs for dependent services
+5. Generate structured investigation summary
+6. `notify_teams` — post summary to Teams with auto-inferred severity
 
-## How Investigations Flow
+## Severity Inference
 
-1. Parse alarm email body (`parse_aws_alert_email`)
-2. Discover best log group (`discover_log_group`)
-3. Fetch primary logs (`fetch_cloudwatch_logs`)
-4. Check dependency logs (`check_service_dependencies`)
-5. Generate final summary response
+Severity is auto-inferred from the investigation summary content — the LLM does not choose it:
 
-The agent prompt strongly enforces using the alarm timestamp for log queries.
+| Severity | Triggered by |
+|----------|-------------|
+| Critical | outage, down, unavailable, fatal, crash, 500 errors |
+| High | default — alarm fired with errors present |
+| Medium | threshold crossed but no log evidence of errors |
+| Low | resolved, OK state, no errors found |
 
-## Testing
-
-Run tool-level evaluations:
-
-```bash
-python tests/run_evals.py
-```
-
-Run tool-level + agent-level evaluations (requires Ollama):
-
-```bash
-python tests/run_evals.py --agent
-```
-
-## Docker
-
-Build and run with Compose:
-
-```bash
-docker compose up --build
-```
-
-Services defined:
-- `ollama`
-- `alert-bot`
-
-The compose file mounts:
-- `./logs:/app/logs`
-- `./memory.json:/app/memory.json`
-- `./config.yaml:/app/config.yaml`
-- `./services.yaml:/app/services.yaml`
-
-## AWS Permissions
-
-Minimum IAM actions used by active tools:
+## AWS Permissions Required
 
 ```json
 {
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "logs:FilterLogEvents",
-        "resource-explorer-2:Search"
-      ],
-      "Resource": "*"
-    }
-  ]
+  "Effect": "Allow",
+  "Action": [
+    "logs:FilterLogEvents",
+    "resource-explorer-2:Search"
+  ],
+  "Resource": "*"
 }
 ```
 
-## Notes on Optional Files
+## Microsoft Graph API Permissions Required
 
-- `services.yaml`: used by service registry tooling; currently template/commented data
-- `framework/skills/service-registry/references/service_dependencies_kb.md`: dependency mapping source used by `check_service_dependencies`
-- `clear_cache.sh`: convenience script to clear local caches/memory
+- `Mail.Read`
+- `Mail.ReadWrite` (to mark emails as read)
 
 ## Troubleshooting
 
-- No logs returned:
-  - verify `alarm_timestamp` is passed into log fetches
-  - increase `minutes_back`
-  - verify log group and region
-- Log group discovery fails:
-  - check Resource Explorer is enabled and indexed
-  - verify IAM permission `resource-explorer-2:Search`
-- Daemon mode exits with no sources:
-  - set `email.username` in `config.yaml`
-- Ollama issues:
-  - verify `ollama serve` is running
-  - verify model exists (for example `qwen2.5:7b`)
+- **No logs returned**: verify `alarm_timestamp` is passed, increase `minutes_back`, check log group and region
+- **Log group discovery fails**: ensure Resource Explorer is enabled and indexed in your AWS account
+- **Graph API 400 errors**: OData `contains()` filter is not supported — the client falls back to client-side filtering automatically
+- **Expired token errors**: AWS session tokens expire; update credentials in `config.yaml`
+- **Daemon exits immediately**: ensure `email.userId` is set in `config.yaml`
+- **Teams card not appearing**: verify `teams.webhook_url` is set and the connector is active in your channel
