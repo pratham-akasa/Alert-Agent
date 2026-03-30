@@ -32,7 +32,7 @@ agents:
     bedrock_agentcore:
       agent_id: rca_agent-CLF5Sm9ClY
       agent_arn: arn:aws:bedrock-agentcore:ap-south-1:891377165721:runtime/rca_agent-CLF5Sm9ClY
-      agent_session_id: 5fef9d58-5663-4b66-952a-5a4dc8af0d35
+      agent_session_id: null
     codebuild:
       project_name: bedrock-agentcore-rca_agent-builder
       execution_role: arn:aws:iam::891377165721:role/rca-agent-codebuild-execution-role

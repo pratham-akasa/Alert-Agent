@@ -35,8 +35,6 @@ CRITICAL LANGUAGE RULE:
 **CRITICAL EMAIL BODY RULE:**
 - You MUST use the EXACT email body from the event payload above
 - The email body is in the JSON field "body" in the payload
-- Do NOT generate fake email bodies with headers like "From: AWS Alerts <alerts@example.com>"
-- Do NOT use test data like "BookingController.createBooking() throwing NullPointerException"
 - Do NOT create example emails - use ONLY the real email body provided
 - If you use any email body other than the exact one from the payload, the investigation will FAIL
 
@@ -44,9 +42,10 @@ Execute ALL steps automatically without asking for permission.
 
 WORKFLOW (execute in order):
 1. parse_aws_alert_email → Extract alarm_name and timestamp from email
-    CRITICAL: Use the EXACT email body from the event payload above
-    CRITICAL: Do NOT use placeholder text like "This is a sample email body"
-    CRITICAL: Extract the "body" field from the JSON payload and pass it to parse_aws_alert_email
+    CRITICAL: Pass the alarm payload to parse_aws_alert_email correctly:
+    - If payload has a "body" field: pass payload["body"]
+    - If payload has "AlarmName" field: convert entire payload to JSON string using json.dumps(payload)
+    CRITICAL: Do NOT reformat JSON to text - pass it as a JSON string
     CRITICAL: Save the "timestamp" field from the output - you MUST use it in steps 3 and 4
 2. discover_log_group(alarm_name=<alarm_name>) → Get best_log_group
     CRITICAL: Save the "best_log_group" value - you MUST use it in step 3
@@ -59,11 +58,15 @@ WORKFLOW (execute in order):
     CRITICAL: Use the SAME timestamp from step 1 as alarm_timestamp parameter
     CRITICAL: The alarm_timestamp parameter is MANDATORY - do NOT skip it
 5. CREATE INVESTIGATION SUMMARY - **MANDATORY STEP**
-6. notify_teams(summary=<investigation_summary>, alarm_name=<alarm_name>, log_group=<best_log_group>) - **MANDATORY FINAL STEP**
+    CRITICAL: Use the EXACT format from investigation_summary_skill.md with all 4 sections
+    CRITICAL: Save this complete formatted summary - you will pass it to notify_teams in step 6
+6. notify_teams(summary=<FULL_INVESTIGATION_SUMMARY>, alarm_name=<alarm_name>, log_group=<best_log_group>) - **MANDATORY FINAL STEP**
+    CRITICAL: Pass the COMPLETE investigation summary from step 5 including ALL sections (🔍 INVESTIGATION SUMMARY with WHERE, WHAT, WHY, SOLUTIONS)
+    CRITICAL: Do NOT summarize or shorten it - pass the entire formatted text with emojis and all 4 sections
+    CRITICAL: The summary parameter should contain the full multi-section investigation report exactly as created in step 5
 
 RULES:
 - Execute all steps automatically - do NOT ask for permission
-- Do NOT stop after discovering log groups - immediately fetch logs
 - ALWAYS use the "best_log_group" value from discover_log_group output in step 3
 - ALWAYS use the correct parameter name "log_group_name" for fetch_cloudwatch_logs
 - ALWAYS pass the "timestamp" from parse_aws_alert_email as "alarm_timestamp" to fetch_cloudwatch_logs
