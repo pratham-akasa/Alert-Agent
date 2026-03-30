@@ -1,0 +1,62 @@
+default_agent: rca_agent
+agents:
+  rca_agent:
+    name: rca_agent
+    language: python
+    node_version: '20'
+    entrypoint: /mnt/c/Users/PrathamJain/OneDrive - SNV Aviation Pvt Ltd/Documents/Work/AWS-Alert-Bot/agentcore-deployment/lambda_handler.py
+    deployment_type: container
+    runtime_type: null
+    platform: linux/arm64
+    container_runtime: docker
+    source_path: /mnt/c/Users/PrathamJain/OneDrive - SNV Aviation Pvt Ltd/Documents/Work/AWS-Alert-Bot/agentcore-deployment
+    aws:
+      execution_role: arn:aws:iam::891377165721:role/rca-agent-runtime-execution-role
+      execution_role_auto_create: false
+      account: '891377165721'
+      region: ap-south-1
+      ecr_repository: 891377165721.dkr.ecr.ap-south-1.amazonaws.com/bedrock-agentcore-rca_agent
+      ecr_auto_create: false
+      s3_path: arn:aws:s3:::aws-alert-bot-memory
+      s3_auto_create: false
+      network_configuration:
+        network_mode: PUBLIC
+        network_mode_config: null
+      protocol_configuration:
+        server_protocol: HTTP
+      observability:
+        enabled: true
+      lifecycle_configuration:
+        idle_runtime_session_timeout: null
+        max_lifetime: null
+    bedrock_agentcore:
+      agent_id: rca_agent-CLF5Sm9ClY
+      agent_arn: arn:aws:bedrock-agentcore:ap-south-1:891377165721:runtime/rca_agent-CLF5Sm9ClY
+      agent_session_id: 5fef9d58-5663-4b66-952a-5a4dc8af0d35
+    codebuild:
+      project_name: bedrock-agentcore-rca_agent-builder
+      execution_role: arn:aws:iam::891377165721:role/rca-agent-codebuild-execution-role
+      source_bucket: bedrock-agentcore-codebuild-sources-891377165721-ap-south-1
+    memory:
+      mode: STM_AND_LTM
+      memory_id: rca_agent_mem-nQSXa05lU6
+      memory_arn: arn:aws:bedrock-agentcore:ap-south-1:891377165721:memory/rca_agent_mem-nQSXa05lU6
+      memory_name: rca_agent_mem
+      event_expiry_days: 30
+      first_invoke_memory_check_done: true
+      was_created_by_toolkit: true
+    identity:
+      credential_providers: []
+      workload: null
+    aws_jwt:
+      enabled: false
+      audiences: []
+      signing_algorithm: ES384
+      issuer_url: null
+      duration_seconds: 300
+    authorizer_configuration: null
+    request_header_configuration: null
+    oauth_configuration: null
+    api_key_env_var_name: null
+    api_key_credential_provider_name: null
+    is_generated_by_agentcore_create: false

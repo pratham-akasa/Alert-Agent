@@ -1,0 +1,48 @@
+# # ──────────────────────────────────────────────────────────────────────
+# # Service Registry — maps alarms → log groups → owners → dependencies
+# #
+# # The agent uses this to look up context when investigating alerts.
+# # Add your services below following the template.
+# # ──────────────────────────────────────────────────────────────────────
+
+# # # ──────────────────────────────────────────────────────────────────────
+# # # Service Registry — maps alarms → log groups → owners → dependencies
+# # #
+# # # The agent uses this to look up context when investigating alerts.
+# # # Add your services below following the template.
+# # # ──────────────────────────────────────────────────────────────────────
+
+
+services:
+
+  qp-booking-webservice:
+    description: "Handles flight booking, seat selection, and reservation management"
+    owner_team: "booking-platform"
+    teams_channel: "AWS Alerts"
+    depends_on:
+      - "Nav-ods-Webservice"
+      - "data-transfer-service"
+    flow: 
+      - "qp-booking-webservice -> Navitaire -> NavOds-Webservice -> UTAM"
+      - "qp-booking-webservice -> Navitaire -> GLUE JOB -> S3"
+      - "qp-booking-webservice -> Navitaire -> GLUE JOB -> QP-DWH -> ELT-FRAMEWORK -> SkyBreathe SFTP"
+      - "qp-booking-webservice -> Navitaire -> GLUE JOB -> P-ESB -> DATA TRANSFER SERVICE -> INDIA APIS"
+      - "qp-booking-webservice -> Navitaire -> GLUE JOB -> P-ESB -> GST"
+      - "qp-booking-webservice -> Navitaire -> FNS"
+    # notes: "Common error alarm can fire during batch jobs around 4 AM UTC"
+
+#   # ── Template: Copy this block to add a new service ──────────────────
+#   #
+#   # service-name:
+#   #   description: "What this service does"
+#   #   log_groups:
+#   #     - "/copilot/qp-prod-service-name"
+#   #   alarms:
+#   #     - "alarm-name-1"
+#   #     - "alarm-name-2"
+#   #   owner_team: "team-name"
+#   #   teams_channel: "AWS Alerts"
+#   #   depends_on:
+#   #     - "other-service"
+#   #   runbook: "https://docs.internal/runbooks/service-name"
+#   #   notes: "Any operational notes"

@@ -1,0 +1,11 @@
+{
+  "event": {
+    "source": "email",
+    "event_type": "aws_alarm",
+    "payload": {
+      "subject": "ALARM: qp-booking-service-common-error in Asia Pacific (Mumbai)",
+      "from": "no-reply@sns.amazonaws.com",
+      "body": "You are receiving this email because your Amazon CloudWatch Alarm \"qp-booking-service-common-error\" in the Asia Pacific (Mumbai) region has entered the ALARM state.\n\n- Name: qp-booking-service-common-error\n- Description: Common error alarm for booking service\n- State Change: OK -> ALARM\n- Reason for State Change: Threshold Crossed: 1 datapoint [5.0 (23/03/26 10:08:00)] was greater than or equal to the threshold (1.0).\n- Timestamp: Monday 23 March, 2026 10:08:18 UTC\n- AWS Account: 471112573018\n- Alarm Arn: arn:aws:cloudwatch:ap-south-1:471112573018:alarm:qp-booking-service-common-error\n- MetricName: ErrorCount\n\nView this alarm in the AWS Management Console:\nhttps://console.aws.amazon.com/cloudwatch/home?region=ap-south-1#alarm:alarmFilter=ANY;name=qp-booking-service-common-error"
+    }
+  }
+}

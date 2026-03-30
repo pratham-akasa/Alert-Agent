@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environments
+.env
+.venv/
+env/
+.alert-bot/
+.alert-bot
+
+# Project specifics
+memory.json
+config.yaml
+logs/
+
+# AgentCore deployment
+.agentcore/
+agentcore-deployment.zip
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+WEBHOOK_FLOW_DIAGRAM.md
