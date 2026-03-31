@@ -44,7 +44,8 @@ def _extract_search_queries(alarm_name: str) -> list[str]:
 
     Returns de-duplicated list in priority order, max 5 entries.
     """
-    name = alarm_name.strip().lower()
+    # Normalize: convert underscores to hyphens, then lowercase
+    name = alarm_name.strip().replace("_", "-").lower()
 
     # ── Strip known alarm-type suffixes ────────────────────────────
     base = name

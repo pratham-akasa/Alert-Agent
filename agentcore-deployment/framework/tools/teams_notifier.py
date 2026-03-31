@@ -140,11 +140,21 @@ def notify_teams(
     """
     Send an investigation summary to a Microsoft Teams channel.
 
-    Use this tool AFTER completing your investigation to notify the team
-    about what happened and what action should be taken.
+    CRITICAL: This is the FINAL step in the investigation workflow.
+    You MUST pass the COMPLETE investigation summary with ALL 4 sections:
+    - Section 1: WHERE IT HAPPENED
+    - Section 2: WHAT HAPPENED  
+    - Section 3: WHY IT HAPPENED (Root Cause)
+    - Section 4: POSSIBLE SOLUTIONS
+    
+    The summary parameter should contain the ENTIRE formatted text from your investigation
+    summary (200+ words), including the "🔍 INVESTIGATION SUMMARY" header, all section
+    headers with emojis, all bullet points, and all technical details.
+    
+    DO NOT pass a shortened or condensed version - pass the complete multi-section report.
 
     Args:
-        summary: The full investigation summary to post.
+        summary: The COMPLETE investigation summary with all 4 sections (WHERE, WHAT, WHY, SOLUTIONS).
         alarm_name: Name of the alarm that triggered (e.g. 'qp-booking-service-common-error').
         owner_team: The team responsible for this service (from service registry).
         log_group: The CloudWatch log group that was investigated.

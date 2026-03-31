@@ -58,12 +58,40 @@ WORKFLOW (execute in order):
     CRITICAL: Use the SAME timestamp from step 1 as alarm_timestamp parameter
     CRITICAL: The alarm_timestamp parameter is MANDATORY - do NOT skip it
 5. CREATE INVESTIGATION SUMMARY - **MANDATORY STEP**
-    CRITICAL: Use the EXACT format from investigation_summary_skill.md with all 4 sections
-    CRITICAL: Save this complete formatted summary - you will pass it to notify_teams in step 6
+    CRITICAL: Use the EXACT format from investigation_summary_skill.md with all 4 sections:
+    
+    ## 🔍 INVESTIGATION SUMMARY
+    
+    ### 1. WHERE IT HAPPENED
+    - Primary Service: [actual service name]
+    - Primary Log Group: [actual log group path]
+    - Affected Dependencies: [list dependencies]
+    
+    ### 2. WHAT HAPPENED
+    - Error Type: [specific error type]
+    - Error Message: [actual error from logs]
+    - Error Count: [number]
+    - Sample Error: [paste actual error]
+    
+    ### 3. WHY IT HAPPENED (Root Cause)
+    - Root Cause: [technical analysis]
+    - Contributing Factors: [factors]
+    
+    ### 4. POSSIBLE SOLUTIONS
+    1. [First solution]
+    2. [Second solution]
+    3. [Third solution]
+    
+    CRITICAL: Save this COMPLETE formatted summary with ALL 4 sections - you will pass it to notify_teams in step 6
 6. notify_teams(summary=<FULL_INVESTIGATION_SUMMARY>, alarm_name=<alarm_name>, log_group=<best_log_group>) - **MANDATORY FINAL STEP**
-    CRITICAL: Pass the COMPLETE investigation summary from step 5 including ALL sections (🔍 INVESTIGATION SUMMARY with WHERE, WHAT, WHY, SOLUTIONS)
-    CRITICAL: Do NOT summarize or shorten it - pass the entire formatted text with emojis and all 4 sections
-    CRITICAL: The summary parameter should contain the full multi-section investigation report exactly as created in step 5
+    CRITICAL: Pass the COMPLETE investigation summary from step 5 including:
+    - The "🔍 INVESTIGATION SUMMARY" header
+    - ALL 4 numbered sections (WHERE, WHAT, WHY, SOLUTIONS)
+    - All bullet points and formatting
+    - All emojis and section headers
+    CRITICAL: Do NOT create a new shortened summary - use the EXACT text from step 5
+    CRITICAL: Do NOT summarize or condense it - pass the entire multi-section formatted text
+    CRITICAL: The summary parameter must contain 200+ words with all 4 sections
 
 RULES:
 - Execute all steps automatically - do NOT ask for permission
@@ -198,74 +226,92 @@ class Agent:
         # Build the user message from the event
         user_message = self._format_event(event)
 
-        # Run the agent
+        # Run the agent with retry logic for ModelErrorException
         start_time = time.time()
-        try:
-            result = self.agent.invoke(
-                {"messages": [("user", user_message)]},
-                config={"recursion_limit": self.max_iterations},
-            )
-            
-            # Update context from tool outputs
-            self._update_context_from_messages(result["messages"])
+        max_retries = 3
+        retry_delay = 1  # seconds
+        
+        result = None
+        for attempt in range(max_retries):
+            try:
+                result = self.agent.invoke(
+                    {"messages": [("user", user_message)]},
+                    config={"recursion_limit": self.max_iterations},
+                )
+                
+                # Update context from tool outputs
+                self._update_context_from_messages(result["messages"])
+                break  # Success, exit retry loop
+                
+            except Exception as e:
+                error_str = str(e)
+                if "ModelErrorException" in error_str and "invalid sequence" in error_str:
+                    if attempt < max_retries - 1:
+                        logger.warning(json.dumps({
+                            "message": "model_error_retry",
+                            "meta": {
+                                "run_id": run_id,
+                                "attempt": attempt + 1,
+                                "max_retries": max_retries,
+                                "retry_delay": retry_delay,
+                                "error": error_str
+                            }
+                        }))
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Exponential backoff
+                        continue
+                
+                # If not a retryable error or max retries reached, log and re-raise
+                duration = time.time() - start_time
+                logger.error(json.dumps({
+                    "message": "event_processing_error",
+                    "meta": {
+                        "run_id": run_id,
+                        "error": str(e),
+                        "error_type": type(e).__name__,
+                        "duration_seconds": round(duration, 2)
+                    }
+                }), exc_info=True)
+                raise
 
-            # Extract the final AI message
-            final_message = result["messages"][-1].content
-            
-            duration = time.time() - start_time
-            logger.info(json.dumps({
-                "message": "event_processing_complete",
-                "meta": {
-                    "run_id": run_id,
-                    "duration_seconds": round(duration, 2),
-                    "response_length": len(final_message)
-                }
-            }))
+        # Extract the final AI message
+        final_message = result["messages"][-1].content
+        
+        duration = time.time() - start_time
+        logger.info(json.dumps({
+            "message": "event_processing_complete",
+            "meta": {
+                "run_id": run_id,
+                "duration_seconds": round(duration, 2),
+                "response_length": len(final_message)
+            }
+        }))
 
-            # Save conversation log to /tmp (ephemeral)
-            log_path = self.conv_logger.save(
-                event_source=event.source,
-                event_type=event.event_type,
-                user_message=user_message,
-                messages=result["messages"],
-                final_response=final_message,
-                duration_seconds=duration,
-            )
+        # Save conversation log to /tmp (ephemeral)
+        log_path = self.conv_logger.save(
+            event_source=event.source,
+            event_type=event.event_type,
+            user_message=user_message,
+            messages=result["messages"],
+            final_response=final_message,
+            duration_seconds=duration,
+        )
 
-            # Store in memory
-            self.memory.add_event(
-                summary=f"Processed {event.source}/{event.event_type}: {final_message[:200]}",
-                metadata={
-                    "event_source": event.source,
-                    "event_type": event.event_type,
-                    "response_length": len(final_message),
-                    "log_file": log_path,
-                    "run_id": run_id,
-                },
-            )
+        # Store in memory
+        self.memory.add_event(
+            summary=f"Processed {event.source}/{event.event_type}: {final_message[:200]}",
+            metadata={
+                "event_source": event.source,
+                "event_type": event.event_type,
+                "response_length": len(final_message),
+                "log_file": log_path,
+                "run_id": run_id,
+            },
+        )
 
-            return final_message
-
-        except Exception as e:
-            duration = time.time() - start_time
-            error_msg = f"Agent error: {e}"
-            logger.error(json.dumps({
-                "message": "event_processing_error",
-                "meta": {
-                    "run_id": run_id,
-                    "error": str(e),
-                    "error_type": type(e).__name__,
-                    "duration_seconds": round(duration, 2)
-                }
-            }), exc_info=True)
-
-            self.memory.add_event(
-                summary=f"Error processing {event.source}/{event.event_type}: {e}",
-            )
-            return error_msg
+        return final_message
     
     def _update_context_from_messages(self, messages: list) -> None:
-        """Update context manager from tool outputs in messages."""
         for msg in messages:
             if hasattr(msg, 'type') and msg.type == 'tool':
                 tool_name = getattr(msg, 'name', '')
